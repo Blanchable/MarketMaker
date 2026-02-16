@@ -31,6 +31,19 @@ _MAX_RETRIES = 4
 _BACKOFF_BASE = 1.0
 
 
+def _safe_list(data: dict[str, Any], key: str) -> list:
+    """Return data[key] if it is a list, else empty list.
+
+    Kalshi sometimes returns null for list-valued fields
+    (e.g. ``{"series": null}``).  ``dict.get(key, [])`` would
+    still return None in that case because the key *exists*.
+    """
+    val = data.get(key)
+    if val is None:
+        return []
+    return val
+
+
 class KalshiRestClient:
     """Async REST wrapper for the Kalshi Trade API v2."""
 
@@ -119,7 +132,7 @@ class KalshiRestClient:
         if cursor:
             params["cursor"] = cursor
         data = await self._request("GET", "/markets", params=params)
-        markets = [Market.model_validate(m) for m in data.get("markets", [])]
+        markets = [Market.model_validate(m) for m in _safe_list(data, "markets")]
         next_cursor = data.get("cursor")
         return markets, next_cursor
 
@@ -152,14 +165,22 @@ class KalshiRestClient:
         if tags:
             params["tags"] = tags
         data = await self._request("GET", "/series", params=params)
-        return [Series.model_validate(s) for s in data.get("series", [])]
+        return [Series.model_validate(s) for s in _safe_list(data, "series")]
 
-    async def get_events(self, *, series_ticker: str | None = None) -> list[Event]:
-        params: dict[str, Any] = {}
+    async def get_events(
+        self,
+        *,
+        series_ticker: str | None = None,
+        limit: int = 200,
+        cursor: str | None = None,
+    ) -> list[Event]:
+        params: dict[str, Any] = {"limit": limit}
         if series_ticker:
             params["series_ticker"] = series_ticker
+        if cursor:
+            params["cursor"] = cursor
         data = await self._request("GET", "/events", params=params)
-        return [Event.model_validate(e) for e in data.get("events", [])]
+        return [Event.model_validate(e) for e in _safe_list(data, "events")]
 
     # ── Order endpoints ──────────────────────────────────────────────
 
@@ -187,7 +208,7 @@ class KalshiRestClient:
         if status:
             params["status"] = status
         data = await self._request("GET", "/portfolio/orders", params=params)
-        return [OrderResponse.model_validate(o) for o in data.get("orders", [])]
+        return [OrderResponse.model_validate(o) for o in _safe_list(data, "orders")]
 
     async def cancel_all_orders(self) -> None:
         """Best-effort cancel of all open orders."""
@@ -208,10 +229,8 @@ class KalshiRestClient:
         data = await self._request(
             "GET", "/portfolio/positions", params={"limit": limit}
         )
-        return [
-            Position.model_validate(p)
-            for p in data.get("market_positions", data.get("positions", []))
-        ]
+        raw = _safe_list(data, "market_positions") or _safe_list(data, "positions")
+        return [Position.model_validate(p) for p in raw]
 
     async def get_fills(
         self, *, ticker: str | None = None, limit: int = 100
@@ -220,7 +239,7 @@ class KalshiRestClient:
         if ticker:
             params["ticker"] = ticker
         data = await self._request("GET", "/portfolio/fills", params=params)
-        return [Fill.model_validate(f) for f in data.get("fills", [])]
+        return [Fill.model_validate(f) for f in _safe_list(data, "fills")]
 
     # ── Utility ──────────────────────────────────────────────────────
 

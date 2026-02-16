@@ -147,3 +147,21 @@ class TestStrikeParsing:
 
     def test_subtitle_fallback(self) -> None:
         assert parse_strike("Some title", "above $70,000") == 70000.0
+
+    # ── Real Kalshi subtitle patterns ──
+
+    def test_kalshi_or_above(self) -> None:
+        assert parse_strike("Bitcoin price range  on Feb 20, 2026?", "$78,750 or above") == 78750.0
+
+    def test_kalshi_or_below(self) -> None:
+        assert parse_strike("Bitcoin price range  on Feb 20, 2026?", "$54,749.99 or below") == 54749.99
+
+    def test_kalshi_range_bracket(self) -> None:
+        result = parse_strike("Bitcoin price range  on Feb 20, 2026?", "$77,250 to 78,249.99")
+        assert result is not None
+        assert 77250 < result < 78250  # midpoint ~77,750
+
+    def test_kalshi_range_midpoint(self) -> None:
+        result = parse_strike("", "$74,750 to 75,249.99")
+        expected_mid = (74750 + 75249.99) / 2.0
+        assert result == pytest.approx(expected_mid, abs=0.01)

@@ -14,11 +14,40 @@ from bot.kalshi.rest import KalshiRestClient
 
 log = get_logger(__name__)
 
+# ── Strike extraction patterns ───────────────────────────────────────────────
+# Ordered from most specific to least.  Applied against the combined
+# title + subtitle text for each market.
+
 _STRIKE_PATTERNS = [
-    re.compile(r"(?:above|over|>=?)\s*\$?([\d,]+(?:\.\d+)?)", re.IGNORECASE),
-    re.compile(r"(?:below|under|<=?)\s*\$?([\d,]+(?:\.\d+)?)", re.IGNORECASE),
-    re.compile(r"(?:BTC|Bitcoin)\s*[><=]+\s*\$?([\d,]+(?:\.\d+)?)", re.IGNORECASE),
-    re.compile(r"\$?([\d,]{4,}(?:\.\d+)?)\s*(?:or\s+(?:more|higher|above))", re.IGNORECASE),
+    # "$78,750 or above"  /  "$54,749.99 or below"
+    re.compile(
+        r"\$?([\d,]+(?:\.\d+)?)\s+or\s+(?:above|more|higher)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\$?([\d,]+(?:\.\d+)?)\s+or\s+(?:below|less|lower)",
+        re.IGNORECASE,
+    ),
+    # "$77,250 to 78,249.99"  –  range bracket → use midpoint
+    re.compile(
+        r"\$?([\d,]+(?:\.\d+)?)\s+to\s+\$?([\d,]+(?:\.\d+)?)",
+        re.IGNORECASE,
+    ),
+    # "above $50,000"  /  "over $50,000"
+    re.compile(
+        r"(?:above|over|>=?)\s*\$?([\d,]+(?:\.\d+)?)",
+        re.IGNORECASE,
+    ),
+    # "below $45,000"  /  "under $45,000"
+    re.compile(
+        r"(?:below|under|<=?)\s*\$?([\d,]+(?:\.\d+)?)",
+        re.IGNORECASE,
+    ),
+    # "BTC > 55,000.50"
+    re.compile(
+        r"(?:BTC|Bitcoin)\s*[><=]+\s*\$?([\d,]+(?:\.\d+)?)",
+        re.IGNORECASE,
+    ),
 ]
 
 _BTC_KEYWORDS = re.compile(r"bitcoin|btc", re.IGNORECASE)
@@ -42,22 +71,39 @@ class TradeableMarket:
     open_interest: int
 
 
+def _parse_number(raw: str) -> float:
+    """Convert a string like '78,250.50' to a float."""
+    return float(raw.replace(",", "").replace("$", ""))
+
+
 def parse_strike(title: str, subtitle: str = "") -> float | None:
-    """Extract a numeric strike from market title / subtitle text."""
+    """Extract a numeric strike from market title / subtitle text.
+
+    For range brackets ("$77,250 to 78,249.99") we return the midpoint.
+    """
     text = f"{title} {subtitle}"
     for pat in _STRIKE_PATTERNS:
         m = pat.search(text)
         if m:
-            raw = m.group(1).replace(",", "").replace("$", "")
             try:
-                return float(raw)
-            except ValueError:
+                if m.lastindex and m.lastindex >= 2:
+                    # Range pattern – return midpoint
+                    lo = _parse_number(m.group(1))
+                    hi = _parse_number(m.group(2))
+                    return (lo + hi) / 2.0
+                return _parse_number(m.group(1))
+            except (ValueError, IndexError):
                 continue
     return None
 
 
 def _is_btc_market(market: Market) -> bool:
-    return bool(_BTC_KEYWORDS.search(market.title) or _BTC_KEYWORDS.search(market.subtitle))
+    return bool(
+        _BTC_KEYWORDS.search(market.title)
+        or _BTC_KEYWORDS.search(market.subtitle)
+        or _BTC_KEYWORDS.search(market.event_ticker)
+        or _BTC_KEYWORDS.search(market.ticker)
+    )
 
 
 class MarketDiscovery:
@@ -74,6 +120,7 @@ class MarketDiscovery:
 
     async def refresh_series(self) -> None:
         """Fetch crypto series + events, cache BTC-related tickers."""
+        # Strategy 1: try the /series endpoint (may return null on demo)
         try:
             series_list = await self.rest.get_series(
                 category=self.cfg.series_category,
@@ -89,13 +136,27 @@ class MarketDiscovery:
             ):
                 self._btc_series_tickers.add(s.series_ticker)
 
+        # Strategy 2: scan /events directly for crypto category
+        # This works even when /series returns null.
+        try:
+            events = await self.rest.get_events(limit=200)
+            for ev in events:
+                ev_text = f"{ev.title} {ev.category} {ev.event_ticker}"
+                if _BTC_KEYWORDS.search(ev_text):
+                    self._btc_event_tickers.add(ev.event_ticker)
+                    if ev.series_ticker:
+                        self._btc_series_tickers.add(ev.series_ticker)
+        except Exception as exc:
+            log.warning("Failed to fetch events: %s", exc)
+
+        # Strategy 3: fetch events for any known series tickers
         for st in list(self._btc_series_tickers):
             try:
                 events = await self.rest.get_events(series_ticker=st)
                 for ev in events:
                     self._btc_event_tickers.add(ev.event_ticker)
             except Exception as exc:
-                log.warning("Failed to fetch events for %s: %s", st, exc)
+                log.warning("Failed to fetch events for series %s: %s", st, exc)
 
         log.info(
             "BTC series=%d  events=%d",
