@@ -12,6 +12,7 @@ _DEFAULTS: dict[str, Any] = {
     "environment": "demo",
     "paper_mode": True,
     "live_trading": False,
+    "market_mode": "sports",
     "key_id": "",
     "private_key_path": "",
     "mm_enabled": True,

@@ -183,10 +183,15 @@ class ControlPanel(QWidget):
         self.env_combo.addItems(["demo", "prod"])
         env_layout.addWidget(self.env_combo, 0, 1)
 
-        env_layout.addWidget(QLabel("Mode:"), 1, 0)
+        env_layout.addWidget(QLabel("Trading Mode:"), 1, 0)
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["Paper", "Live"])
         env_layout.addWidget(self.mode_combo, 1, 1)
+
+        env_layout.addWidget(QLabel("Market:"), 2, 0)
+        self.market_mode_combo = QComboBox()
+        self.market_mode_combo.addItems(["Sports (College Basketball)", "Crypto (BTC)"])
+        env_layout.addWidget(self.market_mode_combo, 2, 1)
 
         layout.addWidget(env_group)
 
@@ -297,10 +302,12 @@ class ControlPanel(QWidget):
         """Collect all widget values into a config dict."""
         paper = self.mode_combo.currentText() == "Paper"
         live = self.mode_combo.currentText() == "Live"
+        market_mode = "sports" if self.market_mode_combo.currentIndex() == 0 else "crypto"
         return {
             "environment": self.env_combo.currentText(),
             "paper_mode": paper,
             "live_trading": live,
+            "market_mode": market_mode,
             "key_id": self.key_id_input.text().strip(),
             "private_key_path": self.key_path_input.text().strip(),
             "mm_enabled": self.mm_check.isChecked(),
@@ -322,6 +329,9 @@ class ControlPanel(QWidget):
             self.mode_combo.setCurrentIndex(1)
         else:
             self.mode_combo.setCurrentIndex(0)
+
+        market_mode = cfg.get("market_mode", "sports")
+        self.market_mode_combo.setCurrentIndex(0 if market_mode == "sports" else 1)
 
         self.mm_check.setChecked(cfg.get("mm_enabled", True))
         self.sniper_check.setChecked(cfg.get("sniper_enabled", True))
@@ -358,27 +368,24 @@ class StatusPanel(QWidget):
         grid.setSpacing(8)
 
         self.connection = StatusCard("Connection", "Disconnected")
-        self.spot = StatusCard("BTC Spot", "—")
-        self.vol = StatusCard("Realized Vol", "—")
-        self.pnl_realized = StatusCard("Realized PnL Today", "—")
+        self.mode_card = StatusCard("Market Mode", "—")
+        self.tradeable_card = StatusCard("Tradeable", "—")
+        self.subscribed_card = StatusCard("Subscribed", "—")
+        self.pnl_realized = StatusCard("Realized PnL", "—")
         self.pnl_unrealized = StatusCard("Unrealized PnL", "—")
         self.gross_exp = StatusCard("Gross Exposure", "—")
-        self.tradeable_card = StatusCard("Tradeable Tickers", "—")
-        self.subscribed_card = StatusCard("Subscribed Tickers", "—")
+        self.net_exp = StatusCard("Net Exposure", "—")
         self.kill_switch = StatusCard("Kill Switch", "INACTIVE")
 
         grid.addWidget(self.connection, 0, 0)
-        grid.addWidget(self.spot, 0, 1)
-        grid.addWidget(self.vol, 0, 2)
-        grid.addWidget(self.pnl_realized, 0, 3)
-        grid.addWidget(self.tradeable_card, 0, 4)
-        grid.addWidget(self.pnl_unrealized, 1, 0)
-        grid.addWidget(self.gross_exp, 1, 1)
-        grid.addWidget(self.subscribed_card, 1, 2)
-        grid.addWidget(StatusCard("Net Exposure", "—"), 1, 3)  # placeholder
-        self.net_exp = StatusCard("Net Exposure", "—")
+        grid.addWidget(self.mode_card, 0, 1)
+        grid.addWidget(self.tradeable_card, 0, 2)
+        grid.addWidget(self.subscribed_card, 0, 3)
+        grid.addWidget(self.pnl_realized, 1, 0)
+        grid.addWidget(self.pnl_unrealized, 1, 1)
+        grid.addWidget(self.gross_exp, 1, 2)
         grid.addWidget(self.net_exp, 1, 3)
-        grid.addWidget(self.kill_switch, 1, 4)
+        grid.addWidget(self.kill_switch, 2, 0)
 
         outer.addLayout(grid)
 
@@ -391,12 +398,10 @@ class StatusPanel(QWidget):
             "#a6e3a1" if connected else "#f38ba8",
         )
 
-        spot = data.get("spot", 0)
-        self.spot.set_value(f"${spot:,.2f}" if spot else "—")
-
-        vol = data.get("vol", 0)
-        vol_color = "#a6e3a1" if vol < 0.55 else "#fab387" if vol < 0.8 else "#f38ba8"
-        self.vol.set_value(f"{vol:.4f}" if vol else "—", vol_color)
+        # Market mode
+        mm = data.get("market_mode", "sports")
+        mode_label = "CBB Sports" if mm == "sports" else "BTC Crypto"
+        self.mode_card.set_value(mode_label, "#89b4fa")
 
         pnl_r = data.get("pnl_realized_today", 0)
         pnl_color = "#a6e3a1" if pnl_r >= 0 else "#f38ba8"
@@ -442,7 +447,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Kalshi BTC Bot")
+        self.setWindowTitle("Kalshi Bot")
         self.setMinimumSize(1100, 700)
         self.setStyleSheet(_STYLE)
 
@@ -459,7 +464,7 @@ class MainWindow(QMainWindow):
         root.setSpacing(10)
 
         # Header
-        header = QLabel("Kalshi BTC Bot")
+        header = QLabel("Kalshi Bot")
         header.setStyleSheet(
             "color: #cdd6f4; font-size: 22px; font-weight: bold; padding: 4px 0;"
         )

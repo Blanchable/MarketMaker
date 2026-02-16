@@ -36,6 +36,7 @@ def _apply_config_file(config_path: str) -> None:
     data = json.loads(path.read_text(encoding="utf-8"))
     env_map = {
         "environment": "ENVIRONMENT",
+        "market_mode": "MARKET_MODE",
         "key_id": "KALSHI_KEY_ID",
         "private_key_path": "KALSHI_PRIVATE_KEY_PATH",
         "live_trading": "LIVE_TRADING",

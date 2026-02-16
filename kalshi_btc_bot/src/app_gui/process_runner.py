@@ -58,6 +58,8 @@ class ProcessRunner(QObject):
             env["KALSHI_KEY_ID"] = cfg["key_id"]
         if cfg.get("private_key_path"):
             env["KALSHI_PRIVATE_KEY_PATH"] = str(cfg["private_key_path"])
+        if cfg.get("market_mode"):
+            env["MARKET_MODE"] = cfg["market_mode"]
 
         # Determine the src/ directory to use as cwd for module resolution
         src_dir = Path(__file__).resolve().parent.parent
