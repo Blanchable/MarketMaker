@@ -18,7 +18,7 @@ _STRIKE_PATTERNS = [
     re.compile(r"(?:above|over|>=?)\s*\$?([\d,]+(?:\.\d+)?)", re.IGNORECASE),
     re.compile(r"(?:below|under|<=?)\s*\$?([\d,]+(?:\.\d+)?)", re.IGNORECASE),
     re.compile(r"(?:BTC|Bitcoin)\s*[><=]+\s*\$?([\d,]+(?:\.\d+)?)", re.IGNORECASE),
-    re.compile(r"\$?([\d]{4,}(?:,\d{3})*(?:\.\d+)?)\s*(?:or\s+(?:more|higher|above))", re.IGNORECASE),
+    re.compile(r"\$?([\d,]{4,}(?:\.\d+)?)\s*(?:or\s+(?:more|higher|above))", re.IGNORECASE),
 ]
 
 _BTC_KEYWORDS = re.compile(r"bitcoin|btc", re.IGNORECASE)
