@@ -66,6 +66,14 @@ class HybridController:
             self.cfg.environment, self.paper, self.cfg.live_trading, self.cfg.market_mode,
         )
 
+        # Early auth check – fail fast with a clear message
+        auth_ok = await self.rest.check_auth()
+        if not auth_ok:
+            log.error(
+                "Continuing without authenticated access. "
+                "Portfolio, orders, and WS will not work until credentials are fixed."
+            )
+
         await self.discovery.refresh_series()
         await self.discovery.discover()
         await self.portfolio.refresh()

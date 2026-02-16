@@ -60,6 +60,30 @@ class KalshiRestClient:
     async def close(self) -> None:
         await self._client.aclose()
 
+    async def check_auth(self) -> bool:
+        """One-shot auth test. Returns True if credentials are valid."""
+        try:
+            await self.get_balance()
+            log.info("Auth check passed – credentials are valid")
+            return True
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 401:
+                log.error(
+                    "AUTH CHECK FAILED (401). Your API key or private key is "
+                    "not accepted by Kalshi %s. Possible causes:\n"
+                    "  1) Key was generated for a different environment (demo vs prod)\n"
+                    "  2) Private key file does not match the Key ID\n"
+                    "  3) Key has been revoked or expired\n"
+                    "  4) Key ID is incorrect\n"
+                    "  Verify at: https://kalshi.com/account/settings (or demo equivalent)",
+                    self.cfg.environment,
+                )
+                return False
+            raise
+        except Exception as exc:
+            log.warning("Auth check encountered an error: %s", exc)
+            return False
+
     def _path(self, endpoint: str) -> str:
         """Return the full path (without host) for signature."""
         return f"/trade-api/v2{endpoint}"
