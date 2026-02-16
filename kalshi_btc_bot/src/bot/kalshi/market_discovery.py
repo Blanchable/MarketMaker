@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -14,87 +15,131 @@ from bot.kalshi.rest import KalshiRestClient
 
 log = get_logger(__name__)
 
-# ── Strike extraction patterns ───────────────────────────────────────────────
-# Ordered from most specific to least.  Applied against the combined
-# title + subtitle text for each market.
-
-_STRIKE_PATTERNS = [
-    # "$78,750 or above"  /  "$54,749.99 or below"
-    re.compile(
-        r"\$?([\d,]+(?:\.\d+)?)\s+or\s+(?:above|more|higher)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\$?([\d,]+(?:\.\d+)?)\s+or\s+(?:below|less|lower)",
-        re.IGNORECASE,
-    ),
-    # "$77,250 to 78,249.99"  –  range bracket → use midpoint
-    re.compile(
-        r"\$?([\d,]+(?:\.\d+)?)\s+to\s+\$?([\d,]+(?:\.\d+)?)",
-        re.IGNORECASE,
-    ),
-    # "above $50,000"  /  "over $50,000"
-    re.compile(
-        r"(?:above|over|>=?)\s*\$?([\d,]+(?:\.\d+)?)",
-        re.IGNORECASE,
-    ),
-    # "below $45,000"  /  "under $45,000"
-    re.compile(
-        r"(?:below|under|<=?)\s*\$?([\d,]+(?:\.\d+)?)",
-        re.IGNORECASE,
-    ),
-    # "BTC > 55,000.50"
-    re.compile(
-        r"(?:BTC|Bitcoin)\s*[><=]+\s*\$?([\d,]+(?:\.\d+)?)",
-        re.IGNORECASE,
-    ),
-]
-
 _BTC_KEYWORDS = re.compile(r"bitcoin|btc", re.IGNORECASE)
 
 
+# ── StrikeInfo ───────────────────────────────────────────────────────────────
+
+@dataclass
+class StrikeInfo:
+    """Parsed strike information from a market title/subtitle."""
+    lower: float | None = None
+    upper: float | None = None
+    kind: str = "unknown"  # "above", "below", "range", "unknown"
+
+    @property
+    def strike(self) -> float | None:
+        if self.kind == "above" and self.lower is not None:
+            return self.lower
+        if self.kind == "below" and self.upper is not None:
+            return self.upper
+        if self.kind == "range" and self.lower is not None and self.upper is not None:
+            return (self.lower + self.upper) / 2.0
+        return self.lower or self.upper
+
+
+# ── Number parsing helpers ───────────────────────────────────────────────────
+
+def _expand_k(text: str) -> str:
+    """Replace k/K suffix with 000, handling decimals like 67.5k -> 67500."""
+    def _repl(m: re.Match) -> str:
+        num_str = m.group(1)
+        if "." in num_str:
+            return str(int(float(num_str) * 1000))
+        return num_str + "000"
+    return re.sub(r"(\d+(?:\.\d+)?)k\b", _repl, text, flags=re.IGNORECASE)
+
+
+def _parse_number(raw: str) -> float:
+    """Convert a string like '78,250.50' or '67500' to a float."""
+    cleaned = raw.replace(",", "").replace("$", "").strip()
+    return float(cleaned)
+
+
+# ── Strike extraction patterns ───────────────────────────────────────────────
+
+_PATTERNS_ABOVE = [
+    re.compile(r"\$?([\d,]+(?:\.\d+)?)\s+or\s+(?:above|more|higher)", re.IGNORECASE),
+    re.compile(r"(?:above|over|>=?)\s*\$?([\d,]+(?:\.\d+)?)", re.IGNORECASE),
+    re.compile(r"(?:BTC|Bitcoin)\s*(?:>=?|>)\s*\$?([\d,]+(?:\.\d+)?)", re.IGNORECASE),
+]
+
+_PATTERNS_BELOW = [
+    re.compile(r"\$?([\d,]+(?:\.\d+)?)\s+or\s+(?:below|less|lower)", re.IGNORECASE),
+    re.compile(r"(?:below|under|<=?)\s*\$?([\d,]+(?:\.\d+)?)", re.IGNORECASE),
+    re.compile(r"(?:BTC|Bitcoin)\s*(?:<=?|<)\s*\$?([\d,]+(?:\.\d+)?)", re.IGNORECASE),
+]
+
+_PATTERNS_RANGE = [
+    re.compile(r"\$?([\d,]+(?:\.\d+)?)\s+to\s+\$?([\d,]+(?:\.\d+)?)", re.IGNORECASE),
+    re.compile(r"\$?([\d,]+(?:\.\d+)?)\s*[-–]\s*\$?([\d,]+(?:\.\d+)?)", re.IGNORECASE),
+    re.compile(r"between\s+\$?([\d,]+(?:\.\d+)?)\s+and\s+\$?([\d,]+(?:\.\d+)?)", re.IGNORECASE),
+]
+
+
+def parse_strike(title: str, subtitle: str = "") -> float | None:
+    """Extract a numeric strike. Returns the float value or None."""
+    info = parse_strike_info(title, subtitle)
+    return info.strike
+
+
+def parse_strike_info(title: str, subtitle: str = "") -> StrikeInfo:
+    """Full strike parser returning structured StrikeInfo."""
+    text = _expand_k(f"{title} {subtitle}")
+
+    # Try range patterns first (most specific)
+    for pat in _PATTERNS_RANGE:
+        m = pat.search(text)
+        if m:
+            try:
+                lo = _parse_number(m.group(1))
+                hi = _parse_number(m.group(2))
+                return StrikeInfo(lower=lo, upper=hi, kind="range")
+            except (ValueError, IndexError):
+                continue
+
+    # Above patterns
+    for pat in _PATTERNS_ABOVE:
+        m = pat.search(text)
+        if m:
+            try:
+                val = _parse_number(m.group(1))
+                return StrikeInfo(lower=val, kind="above")
+            except (ValueError, IndexError):
+                continue
+
+    # Below patterns
+    for pat in _PATTERNS_BELOW:
+        m = pat.search(text)
+        if m:
+            try:
+                val = _parse_number(m.group(1))
+                return StrikeInfo(upper=val, kind="below")
+            except (ValueError, IndexError):
+                continue
+
+    return StrikeInfo()
+
+
+# ── TradeableMarket ──────────────────────────────────────────────────────────
+
 @dataclass
 class TradeableMarket:
-    """A market that passed all filters and is ready for quoting."""
-
+    """A market that passed discovery filters and is ready for quoting."""
     ticker: str
     event_ticker: str
     title: str
     strike: float
-    expiration_time: str
-    time_to_expiry_sec: float
-    time_to_expiry_years: float
-    yes_bid: int
-    yes_ask: int
-    spread: int
-    volume_24h: int
-    open_interest: int
-
-
-def _parse_number(raw: str) -> float:
-    """Convert a string like '78,250.50' to a float."""
-    return float(raw.replace(",", "").replace("$", ""))
-
-
-def parse_strike(title: str, subtitle: str = "") -> float | None:
-    """Extract a numeric strike from market title / subtitle text.
-
-    For range brackets ("$77,250 to 78,249.99") we return the midpoint.
-    """
-    text = f"{title} {subtitle}"
-    for pat in _STRIKE_PATTERNS:
-        m = pat.search(text)
-        if m:
-            try:
-                if m.lastindex and m.lastindex >= 2:
-                    # Range pattern – return midpoint
-                    lo = _parse_number(m.group(1))
-                    hi = _parse_number(m.group(2))
-                    return (lo + hi) / 2.0
-                return _parse_number(m.group(1))
-            except (ValueError, IndexError):
-                continue
-    return None
+    strike_kind: str = "unknown"
+    expiration_time: str = ""
+    time_to_expiry_sec: float = 0.0
+    time_to_expiry_years: float = 0.0
+    yes_bid: int = 0
+    yes_ask: int = 0
+    spread: int = 0
+    volume_24h: int = 0
+    open_interest: int = 0
+    has_book: bool = False
 
 
 def _is_btc_market(market: Market) -> bool:
@@ -106,12 +151,12 @@ def _is_btc_market(market: Market) -> bool:
     )
 
 
+# ── MarketDiscovery ──────────────────────────────────────────────────────────
+
 class MarketDiscovery:
     """Scans Kalshi for tradeable BTC binary markets."""
 
-    def __init__(
-        self, rest: KalshiRestClient, cfg: BotConfig | None = None
-    ) -> None:
+    def __init__(self, rest: KalshiRestClient, cfg: BotConfig | None = None) -> None:
         self.rest = rest
         self.cfg = cfg or get_config()
         self.tradeable: list[TradeableMarket] = []
@@ -120,7 +165,6 @@ class MarketDiscovery:
 
     async def refresh_series(self) -> None:
         """Fetch crypto series + events, cache BTC-related tickers."""
-        # Strategy 1: try the /series endpoint (may return null on demo)
         try:
             series_list = await self.rest.get_series(
                 category=self.cfg.series_category,
@@ -136,8 +180,6 @@ class MarketDiscovery:
             ):
                 self._btc_series_tickers.add(s.series_ticker)
 
-        # Strategy 2: scan /events directly for crypto category
-        # This works even when /series returns null.
         try:
             events = await self.rest.get_events(limit=200)
             for ev in events:
@@ -149,7 +191,6 @@ class MarketDiscovery:
         except Exception as exc:
             log.warning("Failed to fetch events: %s", exc)
 
-        # Strategy 3: fetch events for any known series tickers
         for st in list(self._btc_series_tickers):
             try:
                 events = await self.rest.get_events(series_ticker=st)
@@ -158,17 +199,11 @@ class MarketDiscovery:
             except Exception as exc:
                 log.warning("Failed to fetch events for series %s: %s", st, exc)
 
-        log.info(
-            "BTC series=%d  events=%d",
-            len(self._btc_series_tickers),
-            len(self._btc_event_tickers),
-        )
+        log.info("BTC series=%d  events=%d", len(self._btc_series_tickers), len(self._btc_event_tickers))
 
     async def discover(self) -> list[TradeableMarket]:
-        """Fetch BTC markets by known event tickers (avoids scanning all 30k+ markets)."""
+        """Fetch BTC markets by known event tickers and apply filters with diagnostics."""
         candidates: list[Market] = []
-
-        # Fetch markets only for known BTC event tickers (targeted, fast)
         for evt in list(self._btc_event_tickers):
             try:
                 batch = await self.rest.get_all_markets(
@@ -178,7 +213,7 @@ class MarketDiscovery:
             except Exception as exc:
                 log.warning("Failed to fetch markets for event %s: %s", evt, exc)
 
-        # Deduplicate by ticker
+        # Deduplicate
         seen: set[str] = set()
         deduped: list[Market] = []
         for m in candidates:
@@ -189,28 +224,82 @@ class MarketDiscovery:
 
         log.info("BTC candidate markets: %d (from %d events)", len(candidates), len(self._btc_event_tickers))
 
+        is_demo = self.cfg.is_demo
+        min_spread = self.cfg.effective_min_spread
+        max_spread = self.cfg.effective_max_spread
+        allow_missing_book = is_demo and self.cfg.demo_allow_missing_book
+
+        # Filter with diagnostics
+        diag: dict[str, int] = defaultdict(int)
+        diag_samples: dict[str, list[str]] = defaultdict(list)
         tradeable: list[TradeableMarket] = []
+
         for m in candidates:
             tte_sec = seconds_until(m.expiration_time or m.close_time)
             tte_yr = years_until(m.expiration_time or m.close_time)
 
+            # Filter: too close to expiry
             if tte_sec < self.cfg.no_trade_window_seconds:
+                diag["too_close_to_expiry"] += 1
+                if len(diag_samples["too_close_to_expiry"]) < 3:
+                    diag_samples["too_close_to_expiry"].append(
+                        f"ticker={m.ticker} tte={tte_sec:.0f}s"
+                    )
                 continue
 
-            strike = parse_strike(m.title, m.subtitle)
-            if strike is None:
-                continue
+            # Strike parsing
+            strike_info = parse_strike_info(m.title, m.subtitle)
+            strike_val = strike_info.strike
 
-            spread = (m.yes_ask - m.yes_bid) if m.yes_bid > 0 and m.yes_ask > 0 else 0
-            if spread < self.cfg.min_spread_cents or spread > self.cfg.max_spread_cents:
-                continue
+            if strike_val is None:
+                if is_demo:
+                    # In demo: keep as tradeable but with strike=0 and kind=unknown
+                    strike_val = 0.0
+                    diag["strike_unknown_kept"] += 1
+                else:
+                    diag["missing_strike"] += 1
+                    if len(diag_samples["missing_strike"]) < 5:
+                        diag_samples["missing_strike"].append(
+                            f"ticker={m.ticker} title='{m.title[:50]}' sub='{m.subtitle[:50]}'"
+                        )
+                    continue
+
+            # Book / spread check
+            has_book = m.yes_bid > 0 and m.yes_ask > 0
+            spread = (m.yes_ask - m.yes_bid) if has_book else 0
+
+            if not has_book:
+                if not allow_missing_book:
+                    diag["missing_book"] += 1
+                    if len(diag_samples["missing_book"]) < 3:
+                        diag_samples["missing_book"].append(
+                            f"ticker={m.ticker} bid={m.yes_bid} ask={m.yes_ask}"
+                        )
+                    continue
+                # demo: allow through with spread=0
+            else:
+                if spread < min_spread:
+                    diag["spread_too_narrow"] += 1
+                    if len(diag_samples["spread_too_narrow"]) < 3:
+                        diag_samples["spread_too_narrow"].append(
+                            f"ticker={m.ticker} spread={spread}c"
+                        )
+                    continue
+                if spread > max_spread:
+                    diag["spread_too_wide"] += 1
+                    if len(diag_samples["spread_too_wide"]) < 3:
+                        diag_samples["spread_too_wide"].append(
+                            f"ticker={m.ticker} spread={spread}c"
+                        )
+                    continue
 
             tradeable.append(
                 TradeableMarket(
                     ticker=m.ticker,
                     event_ticker=m.event_ticker,
                     title=m.title,
-                    strike=strike,
+                    strike=strike_val,
+                    strike_kind=strike_info.kind,
                     expiration_time=m.expiration_time or m.close_time,
                     time_to_expiry_sec=tte_sec,
                     time_to_expiry_years=tte_yr,
@@ -219,11 +308,29 @@ class MarketDiscovery:
                     spread=spread,
                     volume_24h=m.volume_24h,
                     open_interest=m.open_interest,
+                    has_book=has_book,
                 )
             )
 
         self.tradeable = tradeable
+
+        # Log diagnostics
         log.info("Tradeable BTC markets after filters: %d", len(tradeable))
+        if diag:
+            parts = [f"{reason}={count}" for reason, count in sorted(diag.items())]
+            log.info("Filter diagnostics: %s", "  ".join(parts))
+            for reason, samples in diag_samples.items():
+                for s in samples:
+                    log.info("  Filtered (%s) %s", reason, s)
+
+        if not tradeable:
+            log.warning(
+                "No tradeable tickers after filters. "
+                "Check filter diagnostics above. "
+                "Total candidates=%d, env=%s, spread_range=[%d,%d], allow_missing_book=%s",
+                len(candidates), self.cfg.environment, min_spread, max_spread, allow_missing_book,
+            )
+
         return tradeable
 
     @property

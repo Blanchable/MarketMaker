@@ -109,10 +109,20 @@ class KalshiWsClient:
                 stale.append(t)
         return stale
 
+    @property
+    def subscribed_count(self) -> int:
+        return len(self._subscribed_tickers)
+
     def is_globally_stale(self, timeout_sec: float) -> bool:
-        """True if no WS message of any kind has arrived within timeout_sec."""
+        """True if no WS message of any kind has arrived within timeout_sec.
+
+        Returns False when no tickers are subscribed (nothing to expect)
+        or when we have never connected.
+        """
         if self._last_ws_message_ts == 0.0:
-            return False  # never connected yet; don't treat as stale
+            return False
+        if self.subscribed_count == 0:
+            return False
         return (time.time() - self._last_ws_message_ts) > timeout_sec
 
     def global_age(self) -> float:

@@ -36,6 +36,21 @@ class BotConfig(BaseSettings):
     min_spread_cents: int = 2
     min_depth_contracts: int = 10
 
+    # ── Demo-relaxed discovery filters ───────────────────────────────
+    demo_min_spread_cents: int = 0
+    demo_max_spread_cents: int = 30
+    demo_allow_missing_book: bool = True
+
+    # ── Discovery refresh cadence ────────────────────────────────────
+    discovery_refresh_seconds_demo: int = 180
+    discovery_refresh_seconds_prod: int = 60
+
+    # ── WS stale timeouts ────────────────────────────────────────────
+    ws_global_timeout_demo: int = 300
+    ws_global_timeout_prod: int = 60
+    ws_ticker_timeout_demo: int = 300
+    ws_ticker_timeout_prod: int = 60
+
     # ── Risk / Capital ───────────────────────────────────────────────
     start_bankroll_dollars: float = 500.0
     daily_stop_dollars: float = 200.0
@@ -77,6 +92,26 @@ class BotConfig(BaseSettings):
     def is_demo(self) -> bool:
         return self.environment == "demo"
 
+    @property
+    def effective_min_spread(self) -> int:
+        return self.demo_min_spread_cents if self.is_demo else self.min_spread_cents
+
+    @property
+    def effective_max_spread(self) -> int:
+        return self.demo_max_spread_cents if self.is_demo else self.max_spread_cents
+
+    @property
+    def effective_discovery_refresh(self) -> int:
+        return self.discovery_refresh_seconds_demo if self.is_demo else self.discovery_refresh_seconds_prod
+
+    @property
+    def effective_ws_global_timeout(self) -> float:
+        return float(self.ws_global_timeout_demo if self.is_demo else self.ws_global_timeout_prod)
+
+    @property
+    def effective_ws_ticker_timeout(self) -> float:
+        return float(self.ws_ticker_timeout_demo if self.is_demo else self.ws_ticker_timeout_prod)
+
     @field_validator("series_tags")
     @classmethod
     def _tags_lower(cls, v: str) -> str:
@@ -103,7 +138,6 @@ _cfg: BotConfig | None = None
 
 
 def get_config() -> BotConfig:
-    """Singleton accessor – lazily created on first call."""
     global _cfg
     if _cfg is None:
         _cfg = BotConfig()
@@ -111,6 +145,5 @@ def get_config() -> BotConfig:
 
 
 def reset_config() -> None:
-    """Allow tests / CLI to reload."""
     global _cfg
     _cfg = None

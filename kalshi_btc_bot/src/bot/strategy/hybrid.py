@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import sys
 from typing import Any
 
@@ -80,8 +81,16 @@ class HybridController:
             tickers = self.discovery.tickers
             if tickers:
                 await self.ws.subscribe(tickers)
+            else:
+                log.warning("No tickers to subscribe – WS connected but idle")
         except Exception as exc:
             log.error("WS connect failed: %s – running REST-only mode", exc)
+
+        if not self.discovery.tradeable:
+            log.warning(
+                "No tradeable tickers after filters; strategy will idle until next discovery cycle. "
+                "Check filter diagnostics in logs above."
+            )
 
         # Run main loops concurrently
         tasks = [
@@ -158,6 +167,8 @@ class HybridController:
             "kill_switch": risk_snap.kill_switch_triggered if risk_snap else False,
             "markets_quoted": len(self.discovery.tradeable),
             "mode": mode,
+            "tradeable_tickers": len(self.discovery.tradeable),
+            "subscribed_tickers": self.ws.subscribed_count,
         }
         line = "STATUS_JSON: " + json.dumps(payload)
         print(line, flush=True)
@@ -165,13 +176,14 @@ class HybridController:
     async def _tick(self) -> None:
         now = now_ms() / 1000.0
 
-        # Periodic market refresh
-        if now - self._last_market_refresh > self.cfg.refresh_markets_seconds:
+        # Periodic market refresh with config-driven cadence and jitter
+        refresh_interval = self.cfg.effective_discovery_refresh
+        if now - self._last_market_refresh > refresh_interval:
             await self.discovery.discover()
             new_tickers = self.discovery.tickers
             if self.ws.is_connected and new_tickers:
                 await self.ws.subscribe(new_tickers)
-            self._last_market_refresh = now
+            self._last_market_refresh = now + random.uniform(0, 2)  # jitter
 
         # Periodic portfolio refresh
         if now - self._last_portfolio_refresh > 10:
@@ -211,12 +223,16 @@ class HybridController:
         if spot is None:
             return
 
+        # If no tradeable tickers, nothing to do – don't spam cancels
+        if not self.discovery.tradeable:
+            return
+
         sigma = self.vol.vol_annualized
         vol_ok = self.vol.vol_ok(self.cfg.mm_only_when_vol_below)
 
         # ── WS health: global + per-ticker stale checks ─────────────
-        global_timeout = 180.0 if self.cfg.is_demo else 60.0
-        ticker_timeout = 180.0 if self.cfg.is_demo else 60.0
+        global_timeout = self.cfg.effective_ws_global_timeout
+        ticker_timeout = self.cfg.effective_ws_ticker_timeout
 
         if self.ws.is_connected and self.ws.is_globally_stale(global_timeout):
             age = self.ws.global_age()
@@ -246,7 +262,6 @@ class HybridController:
 
         # Process each market
         for mkt in self.discovery.tradeable:
-            # Skip tickers already cancelled above as per-ticker stale
             if mkt.ticker in stale_set:
                 continue
 
@@ -265,12 +280,11 @@ class HybridController:
             else:
                 await self.order_mgr.cancel_market(mkt.ticker)
 
-            # Sniper (always check, but with tighter edge in high-vol)
+            # Sniper
             if self.cfg.sniper_enabled and ws_state:
                 sniper_filt = check_sniper_filters(mkt, ws_state, self.cfg)
                 if sniper_filt.passed:
                     signal = self.sniper.evaluate(mkt, ws_state, fv, risk_snap)
-                    # In high-vol mode, require 2x edge
                     if signal and not vol_ok:
                         if signal.edge_cents < self.cfg.sniper_min_edge_cents * 2:
                             signal = None

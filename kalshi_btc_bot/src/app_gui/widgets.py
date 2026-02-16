@@ -336,13 +336,26 @@ class ControlPanel(QWidget):
 
 # ── Status Panel ─────────────────────────────────────────────────────────────
 class StatusPanel(QWidget):
-    """Grid of status cards."""
+    """Grid of status cards + zero-markets warning banner."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        layout = QGridLayout(self)
-        layout.setSpacing(8)
-        layout.setContentsMargins(0, 0, 0, 0)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(6)
+
+        # Warning banner (hidden by default)
+        self._banner = QLabel("")
+        self._banner.setWordWrap(True)
+        self._banner.setStyleSheet(
+            "QLabel { background-color: #f38ba8; color: #1e1e2e; font-weight: bold;"
+            "  padding: 6px 10px; border-radius: 4px; font-size: 12px; }"
+        )
+        self._banner.setVisible(False)
+        outer.addWidget(self._banner)
+
+        grid = QGridLayout()
+        grid.setSpacing(8)
 
         self.connection = StatusCard("Connection", "Disconnected")
         self.spot = StatusCard("BTC Spot", "—")
@@ -350,17 +363,24 @@ class StatusPanel(QWidget):
         self.pnl_realized = StatusCard("Realized PnL Today", "—")
         self.pnl_unrealized = StatusCard("Unrealized PnL", "—")
         self.gross_exp = StatusCard("Gross Exposure", "—")
-        self.net_exp = StatusCard("Net Exposure", "—")
+        self.tradeable_card = StatusCard("Tradeable Tickers", "—")
+        self.subscribed_card = StatusCard("Subscribed Tickers", "—")
         self.kill_switch = StatusCard("Kill Switch", "INACTIVE")
 
-        layout.addWidget(self.connection, 0, 0)
-        layout.addWidget(self.spot, 0, 1)
-        layout.addWidget(self.vol, 0, 2)
-        layout.addWidget(self.pnl_realized, 0, 3)
-        layout.addWidget(self.pnl_unrealized, 1, 0)
-        layout.addWidget(self.gross_exp, 1, 1)
-        layout.addWidget(self.net_exp, 1, 2)
-        layout.addWidget(self.kill_switch, 1, 3)
+        grid.addWidget(self.connection, 0, 0)
+        grid.addWidget(self.spot, 0, 1)
+        grid.addWidget(self.vol, 0, 2)
+        grid.addWidget(self.pnl_realized, 0, 3)
+        grid.addWidget(self.tradeable_card, 0, 4)
+        grid.addWidget(self.pnl_unrealized, 1, 0)
+        grid.addWidget(self.gross_exp, 1, 1)
+        grid.addWidget(self.subscribed_card, 1, 2)
+        grid.addWidget(StatusCard("Net Exposure", "—"), 1, 3)  # placeholder
+        self.net_exp = StatusCard("Net Exposure", "—")
+        grid.addWidget(self.net_exp, 1, 3)
+        grid.addWidget(self.kill_switch, 1, 4)
+
+        outer.addLayout(grid)
 
     @Slot(dict)
     def update_from_status(self, data: dict[str, Any]) -> None:
@@ -397,6 +417,23 @@ class StatusPanel(QWidget):
             "TRIGGERED" if kill else "INACTIVE",
             "#f38ba8" if kill else "#a6e3a1",
         )
+
+        # Tradeable / subscribed tickers
+        t_count = data.get("tradeable_tickers", 0)
+        s_count = data.get("subscribed_tickers", 0)
+        t_color = "#a6e3a1" if t_count > 0 else "#f38ba8"
+        s_color = "#a6e3a1" if s_count > 0 else "#fab387"
+        self.tradeable_card.set_value(str(t_count), t_color)
+        self.subscribed_card.set_value(str(s_count), s_color)
+
+        # Banner
+        if t_count == 0:
+            self._banner.setText(
+                "No tradeable markets after filters. Open Logs for filter breakdown."
+            )
+            self._banner.setVisible(True)
+        else:
+            self._banner.setVisible(False)
 
 
 # ── Main Window ──────────────────────────────────────────────────────────────

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from bot.config import BotConfig
-from bot.kalshi.market_discovery import TradeableMarket, parse_strike
+from bot.kalshi.market_discovery import TradeableMarket, parse_strike, parse_strike_info
 from bot.kalshi.ws import MarketState
 from bot.pricing.fair_value import FairValue
 from bot.strategy.market_maker import compute_quotes
@@ -165,3 +165,56 @@ class TestStrikeParsing:
         result = parse_strike("", "$74,750 to 75,249.99")
         expected_mid = (74750 + 75249.99) / 2.0
         assert result == pytest.approx(expected_mid, abs=0.01)
+
+    # ── k-suffix and additional variations ──
+
+    def test_k_suffix_above(self) -> None:
+        assert parse_strike("above 67k") == 67000.0
+
+    def test_k_suffix_decimal(self) -> None:
+        assert parse_strike("above 67.5k") == 67500.0
+
+    def test_k_range(self) -> None:
+        result = parse_strike("67k-68k")
+        assert result is not None
+        assert result == pytest.approx(67500.0, abs=1.0)
+
+    def test_between_and(self) -> None:
+        result = parse_strike("between 67000 and 67999.99")
+        assert result is not None
+        assert 67000 < result < 68000
+
+    def test_gte_pattern(self) -> None:
+        assert parse_strike(">= 67500") == 67500.0
+
+    def test_or_higher(self) -> None:
+        assert parse_strike("$67,500 or higher") == 67500.0
+
+    def test_dash_range(self) -> None:
+        result = parse_strike("$67,000 – $67,999")
+        assert result is not None
+        assert 67000 < result < 68000
+
+
+class TestStrikeInfo:
+    def test_above_kind(self) -> None:
+        info = parse_strike_info("", "$78,750 or above")
+        assert info.kind == "above"
+        assert info.lower == 78750.0
+
+    def test_below_kind(self) -> None:
+        info = parse_strike_info("", "$54,749.99 or below")
+        assert info.kind == "below"
+        assert info.upper == 54749.99
+
+    def test_range_kind(self) -> None:
+        info = parse_strike_info("", "$77,250 to 78,249.99")
+        assert info.kind == "range"
+        assert info.lower == 77250.0
+        assert info.upper == 78249.99
+        assert info.strike == pytest.approx(77749.995, abs=0.01)
+
+    def test_unknown_kind(self) -> None:
+        info = parse_strike_info("Nothing here")
+        assert info.kind == "unknown"
+        assert info.strike is None
