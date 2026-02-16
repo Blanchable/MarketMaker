@@ -5,7 +5,7 @@ A production-ready Python bot that trades Bitcoin binary markets on [Kalshi](htt
 1. **Market-Make** (provide two-sided liquidity) when realized volatility is calm.
 2. **Snipe** (take mispriced quotes via IOC) when the edge is large.
 
-Supports **demo mode**, **paper trading**, **live trading**, a **kill switch**, full **logging**, and **backtesting** on recorded data.
+Supports **demo mode**, **paper trading**, **live trading**, a **kill switch**, full **logging**, **backtesting** on recorded data, and a **PySide6 desktop GUI** with one-click start/stop.
 
 ---
 
@@ -27,15 +27,24 @@ kalshi_btc_bot/
   README.md               # This file
   .env.example            # Template for environment variables
   .gitignore
+  build_exe.py            # PyInstaller build script for Windows .exe
   src/
+    app_gui/                 # <-- Desktop GUI (PySide6)
+      __init__.py
+      main.py              # GUI entry point
+      widgets.py           # MainWindow, ControlPanel, StatusPanel, StatusCards
+      process_runner.py    # Subprocess management with Qt signals
+      log_tail.py          # Color-coded scrollable log viewer
+      config_store.py      # %APPDATA%/KalshiBot/config.json persistence
+
     bot/
       __init__.py
       config.py            # Pydantic BotConfig – reads all env vars
       main.py              # Async entry point
-      cli.py               # Typer CLI commands
+      cli.py               # Typer CLI commands (with --config support)
 
       infra/
-        log.py             # Rich-based structured logging
+        log.py             # Rich + rotating file logging
         time.py            # Time helpers (epoch ms, UTC, seconds_until)
         storage.py         # SQLite storage layer
         metrics.py         # In-memory counters and gauges
@@ -73,6 +82,7 @@ kalshi_btc_bot/
     test_prob.py           # Probability model monotonicity and bounds
     test_risk.py           # Risk engine limits and kill switch
     test_strategy.py       # Quote generation and strike parsing
+    test_config_store.py   # GUI config persistence
 ```
 
 ---
@@ -98,7 +108,7 @@ kalshi_btc_bot/
 
 ```bash
 cd kalshi_btc_bot
-pip install -e .
+pip install -e ".[dev]"
 ```
 
 ### 4. Configure Environment
@@ -122,7 +132,90 @@ Store your private key file at the path you specified. Make sure it is **not** t
 
 ---
 
-## Usage
+## Desktop GUI
+
+The bot includes a PySide6 desktop application for point-and-click operation.
+
+### Launch the GUI
+
+```bash
+kalshi-gui
+```
+
+Or run directly:
+
+```bash
+python src/app_gui/main.py
+```
+
+### GUI Features
+
+- **Left panel (Controls)**:
+  - Environment dropdown (Demo / Prod)
+  - Mode dropdown (Paper / Live)
+  - Strategy toggles (Market Making, Sniper)
+  - Risk settings (Daily Stop, Max Exposure, etc.)
+  - Credentials (Key ID, Private Key file picker)
+  - Start Bot / Stop Bot / Cancel All Orders / Open Logs Folder buttons
+  - Export Config / Import Config buttons
+
+- **Right panel (Status + Logs)**:
+  - Live status cards: Connection, BTC Spot, Realized Vol, PnL, Exposure, Kill Switch
+  - Scrollable log viewer with color-coded lines (ERROR=red, WARN=orange, SNIPER=green, FILL=blue)
+  - Clear View button
+
+- **Safety**: If you select Prod + Live, a confirmation dialog requires typing "LIVE" to proceed.
+
+### How the GUI Works
+
+The GUI does **not** run trading logic directly. It:
+1. Saves your settings to `%APPDATA%/KalshiBot/config.json` (Windows) or `~/.kalshi_bot/config.json` (Linux/Mac).
+2. Launches the bot CLI as a subprocess: `python -m bot.cli run --config <path>`.
+3. Captures stdout/stderr in real time, parsing `STATUS_JSON:` lines to update the status cards.
+4. On Stop: sends `CTRL_BREAK_EVENT` (Windows) or `SIGTERM`, waits 5 seconds, then kills if needed. Runs `cancel-all` after stop if in live mode.
+
+### Config Persistence
+
+All settings are stored at:
+- **Windows**: `%APPDATA%\KalshiBot\config.json`
+- **Linux/Mac**: `~/.kalshi_bot/config.json`
+
+Only the file **path** to the private key is stored, never its contents. Use Export/Import to back up or share settings.
+
+---
+
+## Building a Windows .exe
+
+### One-file executable (smaller, slower startup)
+
+```bash
+pip install pyinstaller
+python build_exe.py
+```
+
+Output: `dist/KalshiBtcBot.exe`
+
+### One-directory executable (larger, faster startup)
+
+```bash
+python build_exe.py --onedir
+```
+
+Output: `dist/KalshiBtcBot/KalshiBtcBot.exe`
+
+### What the .exe bundles
+
+- All Python dependencies including PySide6
+- The bot trading engine (`src/bot/`)
+- The GUI application (`src/app_gui/`)
+
+On first run, the .exe creates `%APPDATA%\KalshiBot\` for config and logs.
+
+---
+
+## CLI Usage
+
+The bot can also be run entirely from the command line.
 
 ### Run in Demo Paper Mode (safest)
 
@@ -130,15 +223,11 @@ Store your private key file at the path you specified. Make sure it is **not** t
 bot run --env demo --paper true
 ```
 
-Orders are simulated locally. No orders are placed on Kalshi. Great for development.
-
 ### Run in Demo Live Mode
 
 ```bash
 bot run --env demo --paper false
 ```
-
-Places real orders on the **demo** exchange (fake money). Good for integration testing.
 
 ### Run in Production Live Mode
 
@@ -146,9 +235,15 @@ Places real orders on the **demo** exchange (fake money). Good for integration t
 bot run --env prod --paper false --live true
 ```
 
-**This places real orders with real money.** Make sure you understand the risks.
+**This places real orders with real money.**
 
-You must also set `LIVE_TRADING=true` in your `.env` for this to work.
+### Using a JSON config file
+
+```bash
+bot run --config path/to/config.json
+```
+
+The `--config` flag is supported by `run`, `cancel-all`, and `status` commands.
 
 ### Cancel All Orders
 
@@ -162,15 +257,11 @@ bot cancel-all --env demo
 bot status --env demo
 ```
 
-Shows: balance, positions, BTC spot, kill switch state.
-
 ### Run Backtest
 
 ```bash
 bot backtest path/to/bot_data.db
 ```
-
-Replays recorded tick data and outputs summary stats including total return, max drawdown, win rate, and fees.
 
 ---
 
@@ -186,7 +277,8 @@ When triggered:
 1. All resting orders are cancelled immediately.
 2. No new orders are placed.
 3. The bot logs a `CRITICAL` message.
-4. Manual restart is required after reviewing what happened.
+4. In the GUI, the Kill Switch card turns red.
+5. Manual restart is required after reviewing what happened.
 
 ---
 
@@ -231,12 +323,18 @@ All settings are controlled via environment variables (or `.env` file). See `.en
 
 ### Logs
 
-Logs are emitted to stderr via Rich with structured formatting. Key log messages:
+Logs are written to:
+- **Console**: Rich-formatted stderr output
+- **File**: Rotating logs at `%APPDATA%\KalshiBot\logs\bot.log` (Windows) or `~/.kalshi_bot/logs/bot.log` (Linux/Mac)
+- **stdout**: Plain-text lines (captured by the GUI process runner)
 
-- `KILL SWITCH TRIGGERED` – critical, all orders cancelled
-- `SNIPER buy_yes ...` – a sniper trade was fired
-- `PAPER FILL` – a paper trade was simulated
-- `WS disconnected` – WebSocket lost connection
+The GUI "Open Logs Folder" button opens the logs directory in your file explorer.
+
+Key log messages:
+- `KILL SWITCH TRIGGERED` -- critical, all orders cancelled
+- `SNIPER buy_yes ...` -- a sniper trade was fired
+- `PAPER FILL` -- a paper trade was simulated
+- `WS disconnected` -- WebSocket lost connection
 
 ### SQLite Database
 
@@ -268,7 +366,7 @@ sqlite3 bot_data.db "SELECT * FROM fills ORDER BY ts_ms DESC LIMIT 20;"
 
 3. **When vol is calm** (`vol < MM_ONLY_WHEN_VOL_BELOW`):
    - Market-maker provides two-sided quotes around fair value.
-   - Quotes are skewed based on current inventory (long inventory → lower quotes to sell).
+   - Quotes are skewed based on current inventory (long inventory = lower quotes to sell).
    - Uses `post_only` orders to guarantee maker fees.
 
 4. **When edge is detected**:
@@ -276,6 +374,29 @@ sqlite3 bot_data.db "SELECT * FROM fills ORDER BY ts_ms DESC LIMIT 20;"
    - In high-vol mode, sniper requires 2x normal edge.
 
 5. **Risk engine** continuously monitors exposure and enforces hard limits.
+
+### STATUS_JSON Protocol
+
+The bot emits a machine-readable status line to stdout every 2 seconds:
+
+```
+STATUS_JSON: {"connected":true,"spot":50234.12,"vol":0.47,"pnl_realized_today":-12.35,...}
+```
+
+The GUI parses these lines to update the status cards in real time. Fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `connected` | bool | WebSocket connection status |
+| `spot` | float | Current BTC spot price |
+| `vol` | float | Annualized realized volatility |
+| `pnl_realized_today` | float | Realized PnL in dollars |
+| `pnl_unrealized` | float | Unrealized PnL in dollars |
+| `gross_exposure` | float | Total exposure in dollars |
+| `net_exposure` | float | Net directional exposure |
+| `kill_switch` | bool | Whether kill switch is active |
+| `markets_quoted` | int | Number of markets being quoted |
+| `mode` | string | "HYBRID", "MM", "SNIPER", or "OFF" |
 
 ### Probability Model
 
@@ -296,12 +417,13 @@ Where `N()` is the standard normal CDF, `S` is spot, `K` is strike, `t` is time 
 python3 -m pytest tests/ -v
 ```
 
-Tests cover:
+48 tests covering:
 - RSA-PSS signature generation and verification
 - Probability model monotonicity (higher spot = higher prob)
 - Risk engine caps and kill switch
 - Quote generation (bid < ask, within 1..99)
 - Strike extraction from market titles
+- GUI config store persistence and security
 
 ---
 
@@ -316,8 +438,10 @@ Tests cover:
 7. Market maker (paper mode) -- done
 8. Sniper (paper mode) -- done
 9. Hybrid controller (paper mode) -- done
-10. Demo live mode with tiny size -- ready
-11. Production live mode -- ready (use with caution)
+10. Desktop GUI (PySide6) -- done
+11. PyInstaller packaging -- done
+12. Demo live mode with tiny size -- ready
+13. Production live mode -- ready (use with caution)
 
 ---
 
