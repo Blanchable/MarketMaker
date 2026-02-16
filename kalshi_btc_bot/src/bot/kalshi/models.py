@@ -12,9 +12,12 @@ class Market(BaseModel):
     event_ticker: str = ""
     title: str = ""
     subtitle: str = ""
+    yes_sub_title: str = ""
+    no_sub_title: str = ""
     status: str = ""
     close_time: str = ""
     expiration_time: str = ""
+    expected_expiration_time: str = ""
     yes_bid: int = 0
     yes_ask: int = 0
     no_bid: int = 0

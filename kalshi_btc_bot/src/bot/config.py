@@ -11,7 +11,7 @@ from pydantic_settings import BaseSettings
 
 
 class BotConfig(BaseSettings):
-    """All tuneable knobs for the Kalshi BTC hybrid bot."""
+    """All tuneable knobs for the Kalshi hybrid bot."""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
@@ -21,24 +21,34 @@ class BotConfig(BaseSettings):
     kalshi_private_key_path: Path = Path("./kalshi.key")
     live_trading: bool = False
 
-    # ── Market Selection ─────────────────────────────────────────────
+    # ── Market Mode ──────────────────────────────────────────────────
+    # "sports" (college basketball) or "crypto" (BTC binaries)
+    market_mode: str = "sports"
+
+    # ── Sports Market Selection ──────────────────────────────────────
+    sports_category: str = "Sports"
+    sports_series_prefixes: str = "KXNCAAMBGAME,KXNCAAMBSPREAD,KXNCAAMBTOTAL,KXNCAAMB1HTOTAL,KXNCAAMB1HSPREAD,KXNCAAMB1HWINNER"
+    sports_event_keywords: str = "basketball,ncaa,ncaamb,college"
+
+    # ── Crypto Market Selection (legacy BTC mode) ────────────────────
     series_category: str = "crypto"
     series_tags: str = "btc,bitcoin"
     btc_spot_feed: str = "coinbase"
     btc_symbol: str = "BTC-USD"
 
+    # ── General Market Selection ─────────────────────────────────────
     refresh_markets_seconds: int = 30
     stale_ms: int = 3000
 
     market_status: str = "open"
-    min_24h_volume: int = 1000
-    max_spread_cents: int = 8
+    min_24h_volume: int = 0
+    max_spread_cents: int = 15
     min_spread_cents: int = 2
-    min_depth_contracts: int = 10
+    min_depth_contracts: int = 0
 
     # ── Demo-relaxed discovery filters ───────────────────────────────
     demo_min_spread_cents: int = 0
-    demo_max_spread_cents: int = 30
+    demo_max_spread_cents: int = 50
     demo_allow_missing_book: bool = True
 
     # ── Discovery refresh cadence ────────────────────────────────────
@@ -93,6 +103,14 @@ class BotConfig(BaseSettings):
         return self.environment == "demo"
 
     @property
+    def is_sports(self) -> bool:
+        return self.market_mode == "sports"
+
+    @property
+    def sports_series_list(self) -> list[str]:
+        return [s.strip() for s in self.sports_series_prefixes.split(",") if s.strip()]
+
+    @property
     def effective_min_spread(self) -> int:
         return self.demo_min_spread_cents if self.is_demo else self.min_spread_cents
 
@@ -118,12 +136,12 @@ class BotConfig(BaseSettings):
         return v.lower().strip()
 
     def to_gui_dict(self) -> dict:
-        """Serialize config fields to a dict suitable for the GUI config store."""
         return {
             "environment": self.environment,
             "key_id": self.kalshi_key_id,
             "private_key_path": str(self.kalshi_private_key_path),
             "live_trading": self.live_trading,
+            "market_mode": self.market_mode,
             "mm_enabled": self.mm_enabled,
             "sniper_enabled": self.sniper_enabled,
             "daily_stop_dollars": self.daily_stop_dollars,

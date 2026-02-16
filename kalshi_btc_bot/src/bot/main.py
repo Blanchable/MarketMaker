@@ -22,7 +22,10 @@ async def run_bot(cfg: BotConfig | None = None, paper: bool = True) -> None:
 
     rest = KalshiRestClient(cfg)
     ws = KalshiWsClient(cfg)
-    spot_feed = BtcSpotFeed(cfg.btc_spot_feed, cfg.btc_symbol)
+
+    spot_feed = None
+    if not cfg.is_sports:
+        spot_feed = BtcSpotFeed(cfg.btc_spot_feed, cfg.btc_symbol)
 
     controller = HybridController(
         rest=rest,
