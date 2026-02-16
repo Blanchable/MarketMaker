@@ -214,13 +214,42 @@ class HybridController:
         sigma = self.vol.vol_annualized
         vol_ok = self.vol.vol_ok(self.cfg.mm_only_when_vol_below)
 
-        # Check WS health
-        if self.ws.any_stale():
-            log.warning("Some WS feeds stale – cancelling MM orders")
-            await self.mm.cancel_all()
+        # ── WS health: global + per-ticker stale checks ─────────────
+        global_timeout = 180.0 if self.cfg.is_demo else 60.0
+        ticker_timeout = 180.0 if self.cfg.is_demo else 60.0
+
+        if self.ws.is_connected and self.ws.is_globally_stale(global_timeout):
+            age = self.ws.global_age()
+            log.warning(
+                "WS connection stale (no message in %.0fs, limit %.0fs) – cancelling all orders",
+                age, global_timeout,
+            )
+            await self.order_mgr.cancel_all()
+            return
+
+        stale_tickers: list[str] = []
+        if self.ws.is_connected:
+            stale_tickers = self.ws.stale_tickers(self.discovery.tickers, ticker_timeout)
+            if stale_tickers:
+                display = stale_tickers[:10]
+                log.info(
+                    "WS per-ticker stale: %d ticker(s) beyond %.0fs – cancelling those only: %s%s",
+                    len(stale_tickers),
+                    ticker_timeout,
+                    display,
+                    " ..." if len(stale_tickers) > 10 else "",
+                )
+                for t in stale_tickers:
+                    await self.order_mgr.cancel_market(t)
+
+        stale_set = set(stale_tickers)
 
         # Process each market
         for mkt in self.discovery.tradeable:
+            # Skip tickers already cancelled above as per-ticker stale
+            if mkt.ticker in stale_set:
+                continue
+
             ws_state = self.ws.get_state(mkt.ticker)
             t_years = years_until(mkt.expiration_time)
             fv = self.fv_engine.compute(mkt.ticker, spot, mkt.strike, t_years, sigma)

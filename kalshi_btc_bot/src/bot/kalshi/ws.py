@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any, Callable, Coroutine
 
 import websockets
@@ -38,10 +39,9 @@ class MarketState:
             self.volume = int(data["volume"])
         self.last_update_ms = now_ms()
 
-    def is_stale(self, stale_ms: int) -> bool:
-        if self.last_update_ms == 0:
-            return True
-        return (now_ms() - self.last_update_ms) > stale_ms
+    def has_data(self) -> bool:
+        """True if at least one update has ever been received."""
+        return self.last_update_ms > 0
 
     @property
     def mid(self) -> float:
@@ -69,9 +69,22 @@ class KalshiWsClient:
         self._tick_callback: Callback | None = None
         self._subscribed_tickers: set[str] = set()
 
+        # Global activity tracking (updated on ANY ws message)
+        self._last_ws_message_ts: float = 0.0
+        # Per-ticker activity tracking (updated on ticker/orderbook data)
+        self._last_ticker_update: dict[str, float] = {}
+
     @property
     def market_states(self) -> dict[str, MarketState]:
         return self._market_states
+
+    @property
+    def last_ws_message_ts(self) -> float:
+        return self._last_ws_message_ts
+
+    @property
+    def last_ticker_update(self) -> dict[str, float]:
+        return self._last_ticker_update
 
     def set_fill_callback(self, cb: Callback) -> None:
         self._fill_callback = cb
@@ -82,9 +95,31 @@ class KalshiWsClient:
     def get_state(self, ticker: str) -> MarketState | None:
         return self._market_states.get(ticker)
 
-    def any_stale(self) -> bool:
-        stale_ms = self.cfg.stale_ms
-        return any(s.is_stale(stale_ms) for s in self._market_states.values())
+    def stale_tickers(self, active_tickers: list[str], timeout_sec: float) -> list[str]:
+        """Return tickers whose last data update is older than timeout_sec.
+
+        Only considers tickers that have *ever* received data;
+        never-updated tickers are not flagged as stale.
+        """
+        now = time.time()
+        stale: list[str] = []
+        for t in active_tickers:
+            last = self._last_ticker_update.get(t)
+            if last is not None and (now - last) > timeout_sec:
+                stale.append(t)
+        return stale
+
+    def is_globally_stale(self, timeout_sec: float) -> bool:
+        """True if no WS message of any kind has arrived within timeout_sec."""
+        if self._last_ws_message_ts == 0.0:
+            return False  # never connected yet; don't treat as stale
+        return (time.time() - self._last_ws_message_ts) > timeout_sec
+
+    def global_age(self) -> float:
+        """Seconds since last WS message, or 0 if never received one."""
+        if self._last_ws_message_ts == 0.0:
+            return 0.0
+        return time.time() - self._last_ws_message_ts
 
     async def connect(self) -> None:
         ws_path = "/trade-api/ws/v2"
@@ -99,6 +134,7 @@ class KalshiWsClient:
             close_timeout=5,
         )
         self._running = True
+        self._last_ws_message_ts = time.time()
         log.info("WS connected")
 
     async def subscribe(self, tickers: list[str]) -> None:
@@ -138,6 +174,7 @@ class KalshiWsClient:
         for t in tickers:
             self._subscribed_tickers.discard(t)
             self._market_states.pop(t, None)
+            self._last_ticker_update.pop(t, None)
 
     async def listen(self) -> None:
         """Main receive loop – call in a task."""
@@ -145,6 +182,9 @@ class KalshiWsClient:
             raise RuntimeError("WS not connected")
         try:
             async for raw in self._ws:
+                # Update global heartbeat on EVERY message
+                self._last_ws_message_ts = time.time()
+
                 try:
                     msg = json.loads(raw)
                 except json.JSONDecodeError:
@@ -164,16 +204,20 @@ class KalshiWsClient:
 
         if channel == "ticker" or msg_type == "ticker":
             ticker = data.get("market_ticker", "")
-            if ticker and ticker in self._market_states:
-                self._market_states[ticker].update(data)
+            if ticker:
+                self._last_ticker_update[ticker] = time.time()
+                if ticker in self._market_states:
+                    self._market_states[ticker].update(data)
                 metrics.inc("ws_ticker_updates")
                 if self._tick_callback:
                     await self._tick_callback(data)
 
         elif channel == "orderbook_delta" or msg_type == "orderbook_delta":
             ticker = data.get("market_ticker", "")
-            if ticker and ticker in self._market_states:
-                self._market_states[ticker].update(data)
+            if ticker:
+                self._last_ticker_update[ticker] = time.time()
+                if ticker in self._market_states:
+                    self._market_states[ticker].update(data)
                 metrics.inc("ws_orderbook_updates")
 
         elif channel == "fill" or msg_type == "fill":
@@ -191,11 +235,9 @@ class KalshiWsClient:
     def is_connected(self) -> bool:
         if not self._running or self._ws is None:
             return False
-        # websockets v13+: state is an enum; v12: has .open bool
         state = getattr(self._ws, "state", None)
         if state is not None:
             try:
-                import websockets.frames
                 return state.name == "OPEN"
             except Exception:
                 pass

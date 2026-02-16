@@ -36,14 +36,15 @@ def check_market_maker_filters(
     if ws_state is None:
         return FilterResult(False, "no WS state")
 
+    # Need at least some price data to quote around
+    if not ws_state.has_data():
+        return FilterResult(False, "no WS data received yet")
+
     spread = ws_state.spread
     if spread < cfg.min_spread_cents:
         return FilterResult(False, f"spread {spread}c < min {cfg.min_spread_cents}c")
     if spread > cfg.max_spread_cents:
         return FilterResult(False, f"spread {spread}c > max {cfg.max_spread_cents}c")
-
-    if ws_state.is_stale(cfg.stale_ms):
-        return FilterResult(False, "WS data stale")
 
     return FilterResult(True)
 
@@ -62,7 +63,7 @@ def check_sniper_filters(
     if ws_state is None:
         return FilterResult(False, "no WS state")
 
-    if ws_state.is_stale(cfg.stale_ms):
-        return FilterResult(False, "WS data stale")
+    if not ws_state.has_data():
+        return FilterResult(False, "no WS data received yet")
 
     return FilterResult(True)
