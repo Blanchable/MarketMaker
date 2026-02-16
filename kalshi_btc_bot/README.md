@@ -220,19 +220,19 @@ The bot can also be run entirely from the command line.
 ### Run in Demo Paper Mode (safest)
 
 ```bash
-bot run --env demo --paper true
+bot run --env demo --paper
 ```
 
 ### Run in Demo Live Mode
 
 ```bash
-bot run --env demo --paper false
+bot run --env demo --no-paper
 ```
 
 ### Run in Production Live Mode
 
 ```bash
-bot run --env prod --paper false --live true
+bot run --env prod --no-paper --live
 ```
 
 **This places real orders with real money.**

@@ -48,8 +48,8 @@ class ProcessRunner(QObject):
         cmd = [
             sys.executable, "-m", "bot.cli", "run",
             "--env", env_name,
-            "--paper", str(paper).lower(),
-            "--live", str(live).lower(),
+            "--paper" if paper else "--no-paper",
+            "--live" if live else "--no-live",
             "--config", str(config_path()),
         ]
 
