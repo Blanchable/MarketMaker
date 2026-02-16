@@ -1,0 +1,99 @@
+"""Central configuration loaded from environment / .env file."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Literal
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings
+
+
+class BotConfig(BaseSettings):
+    """All tuneable knobs for the Kalshi BTC hybrid bot."""
+
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+
+    # ── Environment ──────────────────────────────────────────────────
+    environment: Literal["demo", "prod"] = "demo"
+    kalshi_key_id: str = ""
+    kalshi_private_key_path: Path = Path("./kalshi.key")
+    live_trading: bool = False
+
+    # ── Market Selection ─────────────────────────────────────────────
+    series_category: str = "crypto"
+    series_tags: str = "btc,bitcoin"
+    btc_spot_feed: str = "coinbase"
+    btc_symbol: str = "BTC-USD"
+
+    refresh_markets_seconds: int = 30
+    stale_ms: int = 3000
+
+    market_status: str = "open"
+    min_24h_volume: int = 1000
+    max_spread_cents: int = 8
+    min_spread_cents: int = 2
+    min_depth_contracts: int = 10
+
+    # ── Risk / Capital ───────────────────────────────────────────────
+    start_bankroll_dollars: float = 500.0
+    daily_stop_dollars: float = 200.0
+    max_gross_exposure_dollars: float = 250.0
+    max_net_exposure_dollars: float = 150.0
+    max_exposure_per_market_dollars: float = 125.0
+    max_order_size_contracts: int = 25
+    no_trade_window_seconds: int = 300
+
+    # ── Market-Making ────────────────────────────────────────────────
+    mm_enabled: bool = True
+    mm_quote_size_contracts: int = 10
+    mm_edge_cents: int = 1
+    mm_inventory_skew: float = 0.25
+    mm_cancel_requote_ms: int = 800
+    mm_only_when_vol_below: float = 0.55
+
+    # ── Sniper ───────────────────────────────────────────────────────
+    sniper_enabled: bool = True
+    sniper_min_edge_cents: int = 6
+    sniper_max_slippage_cents: int = 2
+    sniper_order_tif: str = "immediate_or_cancel"
+    sniper_cooldown_seconds: int = 10
+
+    # ── Derived helpers ──────────────────────────────────────────────
+    @property
+    def rest_base(self) -> str:
+        if self.environment == "prod":
+            return "https://api.elections.kalshi.com/trade-api/v2"
+        return "https://demo-api.kalshi.co/trade-api/v2"
+
+    @property
+    def ws_url(self) -> str:
+        if self.environment == "prod":
+            return "wss://api.elections.kalshi.com/trade-api/ws/v2"
+        return "wss://demo-api.kalshi.co/trade-api/ws/v2"
+
+    @property
+    def is_demo(self) -> bool:
+        return self.environment == "demo"
+
+    @field_validator("series_tags")
+    @classmethod
+    def _tags_lower(cls, v: str) -> str:
+        return v.lower().strip()
+
+
+_cfg: BotConfig | None = None
+
+
+def get_config() -> BotConfig:
+    """Singleton accessor – lazily created on first call."""
+    global _cfg
+    if _cfg is None:
+        _cfg = BotConfig()
+    return _cfg
+
+
+def reset_config() -> None:
+    """Allow tests / CLI to reload."""
+    global _cfg
+    _cfg = None
