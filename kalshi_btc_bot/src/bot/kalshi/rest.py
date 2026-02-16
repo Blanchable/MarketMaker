@@ -29,6 +29,7 @@ log = get_logger(__name__)
 
 _MAX_RETRIES = 4
 _BACKOFF_BASE = 1.0
+_PAGE_DELAY = 0.15  # seconds between paginated requests to avoid 429
 
 
 def _safe_list(data: dict[str, Any], key: str) -> list:
@@ -87,6 +88,18 @@ class KalshiRestClient:
                     headers=headers,
                 )
                 metrics.inc("kalshi_rest_requests")
+
+                if resp.status_code == 401:
+                    log.error(
+                        "Auth 401 on %s %s (signed path: %s, ts: %s, key: %s...)",
+                        method,
+                        endpoint,
+                        path,
+                        headers.get("KALSHI-ACCESS-TIMESTAMP", "?"),
+                        headers.get("KALSHI-ACCESS-KEY", "?")[:12],
+                    )
+                    resp.raise_for_status()
+
                 if resp.status_code == 429 or resp.status_code >= 500:
                     wait = _BACKOFF_BASE * (2 ** (attempt - 1))
                     log.warning(
@@ -134,6 +147,7 @@ class KalshiRestClient:
         return markets, next_cursor
 
     async def get_all_markets(self, **kwargs: Any) -> list[Market]:
+        """Paginate through all markets with rate-limit-safe delays."""
         all_markets: list[Market] = []
         cursor: str | None = None
         while True:
@@ -141,6 +155,7 @@ class KalshiRestClient:
             all_markets.extend(batch)
             if not cursor or not batch:
                 break
+            await asyncio.sleep(_PAGE_DELAY)
         return all_markets
 
     async def get_market(self, ticker: str) -> Market:
@@ -209,7 +224,11 @@ class KalshiRestClient:
 
     async def cancel_all_orders(self) -> None:
         """Best-effort cancel of all open orders."""
-        orders = await self.get_orders(status="resting")
+        try:
+            orders = await self.get_orders(status="resting")
+        except httpx.HTTPStatusError as exc:
+            log.warning("cancel_all_orders: could not list orders: %s", exc)
+            return
         tasks = [self.cancel_order(o.order_id) for o in orders if o.order_id]
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)

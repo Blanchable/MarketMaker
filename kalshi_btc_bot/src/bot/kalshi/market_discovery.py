@@ -165,15 +165,29 @@ class MarketDiscovery:
         )
 
     async def discover(self) -> list[TradeableMarket]:
-        """Full scan: fetch markets, filter, extract strikes, return tradeable list."""
-        all_markets = await self.rest.get_all_markets(status=self.cfg.market_status)
-
+        """Fetch BTC markets by known event tickers (avoids scanning all 30k+ markets)."""
         candidates: list[Market] = []
-        for m in all_markets:
-            if m.event_ticker in self._btc_event_tickers or _is_btc_market(m):
-                candidates.append(m)
 
-        log.info("BTC candidate markets: %d / %d total", len(candidates), len(all_markets))
+        # Fetch markets only for known BTC event tickers (targeted, fast)
+        for evt in list(self._btc_event_tickers):
+            try:
+                batch = await self.rest.get_all_markets(
+                    status=self.cfg.market_status, event_ticker=evt,
+                )
+                candidates.extend(batch)
+            except Exception as exc:
+                log.warning("Failed to fetch markets for event %s: %s", evt, exc)
+
+        # Deduplicate by ticker
+        seen: set[str] = set()
+        deduped: list[Market] = []
+        for m in candidates:
+            if m.ticker not in seen:
+                seen.add(m.ticker)
+                deduped.append(m)
+        candidates = deduped
+
+        log.info("BTC candidate markets: %d (from %d events)", len(candidates), len(self._btc_event_tickers))
 
         tradeable: list[TradeableMarket] = []
         for m in candidates:

@@ -123,24 +123,21 @@ def ensure_venv() -> None:
 
 # ── Step 2: Install dependencies ────────────────────────────────────────────
 
-def install_deps() -> None:
-    """Install project dependencies into the venv."""
-    # Quick check: if the project is already installed, skip
-    try:
-        result = subprocess.run(
-            [str(VENV_PYTHON), "-c", "import bot; import app_gui"],
-            capture_output=True, text=True
-        )
-        if result.returncode == 0:
-            success("Dependencies already installed — skipping.")
-            return
-    except Exception:
-        pass
+def _clear_pycache() -> None:
+    """Remove __pycache__ dirs so stale .pyc files don't shadow new code."""
+    import shutil
+    for dirpath, dirnames, _ in os.walk(PROJECT_ROOT / "src"):
+        for d in dirnames:
+            if d == "__pycache__":
+                shutil.rmtree(os.path.join(dirpath, d), ignore_errors=True)
 
+
+def install_deps() -> None:
+    """Install project dependencies into the venv (always re-installs editable to pick up code changes)."""
     info("Upgrading pip ...")
     run_cmd([str(VENV_PYTHON), "-m", "pip", "install", "--upgrade", "pip", "--quiet"])
 
-    info("Installing dependencies (this may take a minute) ...")
+    info("Installing / updating dependencies ...")
     if PYPROJECT.exists():
         run_cmd(
             [str(VENV_PYTHON), "-m", "pip", "install", "-e", ".[dev]", "--quiet"],
@@ -155,6 +152,7 @@ def install_deps() -> None:
         error("No pyproject.toml or requirements.txt found. Cannot install dependencies.")
         sys.exit(1)
 
+    _clear_pycache()
     success("All dependencies installed.")
 
 
