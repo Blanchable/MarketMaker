@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from typing import Any
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode
 
 import httpx
 
@@ -71,14 +71,11 @@ class KalshiRestClient:
         params: dict[str, Any] | None = None,
         json_body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Kalshi signs over the path WITHOUT query string
         path = self._path(endpoint)
-        if params:
-            path_with_qs = f"{path}?{urlencode(params, doseq=True)}"
-        else:
-            path_with_qs = path
 
         for attempt in range(1, _MAX_RETRIES + 1):
-            headers = self._auth.headers(method.upper(), path_with_qs)
+            headers = self._auth.headers(method.upper(), path)
             headers["Content-Type"] = "application/json"
             headers["Accept"] = "application/json"
             try:

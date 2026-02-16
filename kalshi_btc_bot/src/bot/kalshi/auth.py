@@ -1,17 +1,28 @@
-"""Kalshi API authentication – RSA-PSS signature generation."""
+"""Kalshi API authentication – RSA-PSS signature generation.
+
+Matches the official kalshi-python SDK signing behaviour:
+  - Timestamp in **milliseconds** (not seconds).
+  - RSA-PSS with salt_length = DIGEST_LENGTH (32 bytes for SHA-256).
+  - Message = ``str(ts_ms) + METHOD + path`` (path **without** query string).
+"""
 
 from __future__ import annotations
 
 import base64
+import time
 from pathlib import Path
 
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding, rsa, utils
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from bot.infra.log import get_logger
-from bot.infra.time import now_sec
 
 log = get_logger(__name__)
+
+
+def _now_ms() -> int:
+    """Current epoch in milliseconds."""
+    return int(time.time() * 1000)
 
 
 class KalshiAuth:
@@ -29,32 +40,37 @@ class KalshiAuth:
             raise TypeError("Kalshi requires an RSA private key")
         return key
 
-    def sign(self, timestamp: int, method: str, path: str) -> str:
-        """Produce base64-encoded RSA-PSS signature of (timestamp + METHOD + path).
+    def sign(self, timestamp_ms: int, method: str, path: str) -> str:
+        """Produce base64-encoded RSA-PSS signature.
 
         Parameters
         ----------
-        timestamp : epoch seconds (int)
-        method : HTTP method uppercase, e.g. ``GET``
-        path : request path starting with ``/``, e.g. ``/trade-api/v2/markets``
+        timestamp_ms : epoch **milliseconds** (int).
+        method : HTTP method uppercase, e.g. ``GET``.
+        path : request path starting with ``/``,
+               e.g. ``/trade-api/v2/portfolio/balance``.
+               Must **not** include the query string.
         """
-        message = f"{timestamp}{method}{path}".encode()
+        message = f"{timestamp_ms}{method}{path}".encode("utf-8")
         sig_bytes = self._private_key.sign(
             message,
             padding.PSS(
                 mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=padding.PSS.MAX_LENGTH,
+                salt_length=padding.PSS.DIGEST_LENGTH,
             ),
             hashes.SHA256(),
         )
-        return base64.b64encode(sig_bytes).decode()
+        return base64.b64encode(sig_bytes).decode("utf-8")
 
     def headers(self, method: str, path: str) -> dict[str, str]:
-        """Return a dict of authentication headers for one request."""
-        ts = now_sec()
-        sig = self.sign(ts, method.upper(), path)
+        """Return authentication headers for one request.
+
+        ``path`` must be the URL path **without** query parameters.
+        """
+        ts_ms = _now_ms()
+        sig = self.sign(ts_ms, method.upper(), path)
         return {
             "KALSHI-ACCESS-KEY": self.key_id,
             "KALSHI-ACCESS-SIGNATURE": sig,
-            "KALSHI-ACCESS-TIMESTAMP": str(ts),
+            "KALSHI-ACCESS-TIMESTAMP": str(ts_ms),
         }

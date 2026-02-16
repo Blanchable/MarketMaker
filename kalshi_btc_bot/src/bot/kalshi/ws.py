@@ -7,7 +7,6 @@ import json
 from typing import Any, Callable, Coroutine
 
 import websockets
-import websockets.client
 
 from bot.config import BotConfig, get_config
 from bot.infra.log import get_logger
@@ -63,7 +62,7 @@ class KalshiWsClient:
     def __init__(self, cfg: BotConfig | None = None) -> None:
         self.cfg = cfg or get_config()
         self._auth = KalshiAuth(self.cfg.kalshi_key_id, self.cfg.kalshi_private_key_path)
-        self._ws: websockets.client.WebSocketClientProtocol | None = None
+        self._ws: Any = None  # websockets ClientConnection
         self._running = False
         self._market_states: dict[str, MarketState] = {}
         self._fill_callback: Callback | None = None
@@ -92,7 +91,7 @@ class KalshiWsClient:
         headers = self._auth.headers("GET", ws_path)
         url = self.cfg.ws_url
         log.info("Connecting WS to %s", url)
-        self._ws = await websockets.client.connect(
+        self._ws = await websockets.connect(
             url,
             additional_headers=headers,
             ping_interval=20,
@@ -151,8 +150,10 @@ class KalshiWsClient:
                 except json.JSONDecodeError:
                     continue
                 await self._handle(msg)
-        except websockets.exceptions.ConnectionClosed as exc:
+        except websockets.ConnectionClosed as exc:
             log.warning("WS disconnected: %s", exc)
+        except Exception as exc:
+            log.warning("WS listen error: %s", exc)
         finally:
             self._running = False
 
@@ -188,4 +189,14 @@ class KalshiWsClient:
 
     @property
     def is_connected(self) -> bool:
-        return self._running and self._ws is not None and self._ws.open
+        if not self._running or self._ws is None:
+            return False
+        # websockets v13+: state is an enum; v12: has .open bool
+        state = getattr(self._ws, "state", None)
+        if state is not None:
+            try:
+                import websockets.frames
+                return state.name == "OPEN"
+            except Exception:
+                pass
+        return getattr(self._ws, "open", False)
