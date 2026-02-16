@@ -8,6 +8,14 @@ import os
 from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
+
+# Load .env from the project root (two levels up from src/bot/cli.py)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_ENV_FILE = _PROJECT_ROOT / ".env"
+if _ENV_FILE.exists():
+    load_dotenv(_ENV_FILE)
+
 import typer
 from rich.console import Console
 from rich.table import Table
