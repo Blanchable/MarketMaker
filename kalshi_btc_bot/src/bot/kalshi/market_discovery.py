@@ -160,34 +160,25 @@ class MarketDiscovery:
     # ── Sports discovery ─────────────────────────────────────────────
 
     async def _refresh_sports_series(self) -> None:
-        """Scan configured sports series prefixes for open events."""
-        for series_prefix in self.cfg.sports_series_list:
-            try:
-                events = await self.rest.get_events(series_ticker=series_prefix, limit=200)
-                for ev in events:
-                    self._event_tickers.add(ev.event_ticker)
-                    if ev.series_ticker:
-                        self._series_tickers.add(ev.series_ticker)
-            except Exception as exc:
-                log.warning("Failed to fetch events for series %s: %s", series_prefix, exc)
-
-        log.info(
-            "Sports discovery: series_prefixes=%d  events=%d",
-            len(self.cfg.sports_series_list),
-            len(self._event_tickers),
-        )
+        """Record the configured series prefixes. Event scanning is not needed
+        because _discover_sports fetches markets by series_ticker directly."""
+        for sp in self.cfg.sports_series_list:
+            self._series_tickers.add(sp)
+        log.info("Sports discovery: series_prefixes=%d", len(self._series_tickers))
 
     async def _discover_sports(self) -> list[TradeableMarket]:
-        """Fetch markets for known sports events and apply filters."""
+        """Fetch open markets by series_ticker (batch, ~1-2 pages per series)."""
         candidates: list[Market] = []
-        for evt in list(self._event_tickers):
+
+        for series in sorted(self._series_tickers):
             try:
                 batch = await self.rest.get_all_markets(
-                    status=self.cfg.market_status, event_ticker=evt,
+                    status=self.cfg.market_status, series_ticker=series,
                 )
                 candidates.extend(batch)
+                log.info("  Series %s: %d open markets", series, len(batch))
             except Exception as exc:
-                log.warning("Failed to fetch markets for event %s: %s", evt, exc)
+                log.warning("Failed to fetch markets for series %s: %s", series, exc)
 
         # Deduplicate
         seen: set[str] = set()
@@ -198,7 +189,12 @@ class MarketDiscovery:
                 deduped.append(m)
         candidates = deduped
 
-        log.info("Sports candidate markets: %d (from %d events)", len(candidates), len(self._event_tickers))
+        # Collect event tickers from the fetched markets (for WS grouping)
+        for m in candidates:
+            if m.event_ticker:
+                self._event_tickers.add(m.event_ticker)
+
+        log.info("Sports candidate markets: %d (from %d series)", len(candidates), len(self._series_tickers))
 
         # Group by event_ticker to find complementary markets
         by_event: dict[str, list[Market]] = defaultdict(list)
