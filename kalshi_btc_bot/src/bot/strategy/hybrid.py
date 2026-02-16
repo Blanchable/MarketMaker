@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import sys
 from typing import Any
 
 from bot.config import BotConfig, get_config
@@ -55,6 +57,7 @@ class HybridController:
         self._running = False
         self._last_market_refresh: float = 0
         self._last_portfolio_refresh: float = 0
+        self._last_status_emit: float = 0
 
     async def start(self) -> None:
         """Initialize connections and begin main loop."""
@@ -127,6 +130,38 @@ class HybridController:
                 log.error("Main loop error: %s", exc)
             await asyncio.sleep(1.0)
 
+    def _emit_status_json(self, risk_snap: Any | None = None) -> None:
+        """Print a STATUS_JSON line to stdout for the GUI to parse."""
+        spot = self.spot_feed.last_price
+        sigma = self.vol.vol_annualized
+        vol_ok = self.vol.vol_ok(self.cfg.mm_only_when_vol_below)
+
+        mm_active = vol_ok and self.cfg.mm_enabled
+        sniper_active = self.cfg.sniper_enabled
+        if mm_active and sniper_active:
+            mode = "HYBRID"
+        elif mm_active:
+            mode = "MM"
+        elif sniper_active:
+            mode = "SNIPER"
+        else:
+            mode = "OFF"
+
+        payload = {
+            "connected": self.ws.is_connected,
+            "spot": round(spot, 2) if spot else 0.0,
+            "vol": round(sigma, 4),
+            "pnl_realized_today": round(risk_snap.realized_pnl_today, 2) if risk_snap else 0.0,
+            "pnl_unrealized": round(risk_snap.unrealized_pnl, 2) if risk_snap else 0.0,
+            "gross_exposure": round(risk_snap.gross_exposure, 2) if risk_snap else 0.0,
+            "net_exposure": round(risk_snap.net_exposure, 2) if risk_snap else 0.0,
+            "kill_switch": risk_snap.kill_switch_triggered if risk_snap else False,
+            "markets_quoted": len(self.discovery.tradeable),
+            "mode": mode,
+        }
+        line = "STATUS_JSON: " + json.dumps(payload)
+        print(line, flush=True)
+
     async def _tick(self) -> None:
         now = now_ms() / 1000.0
 
@@ -151,6 +186,14 @@ class HybridController:
                 mid_prices[ticker] = st.mid
 
         risk_snap = self.risk.evaluate(self.portfolio.snapshot, mid_prices)
+
+        # Emit STATUS_JSON every ~2 seconds for the GUI
+        if now - self._last_status_emit >= 2.0:
+            try:
+                self._emit_status_json(risk_snap)
+            except Exception:
+                pass
+            self._last_status_emit = now
 
         # Kill switch
         if risk_snap.kill_switch_triggered:

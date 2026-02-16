@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Literal
 
@@ -80,6 +81,22 @@ class BotConfig(BaseSettings):
     @classmethod
     def _tags_lower(cls, v: str) -> str:
         return v.lower().strip()
+
+    def to_gui_dict(self) -> dict:
+        """Serialize config fields to a dict suitable for the GUI config store."""
+        return {
+            "environment": self.environment,
+            "key_id": self.kalshi_key_id,
+            "private_key_path": str(self.kalshi_private_key_path),
+            "live_trading": self.live_trading,
+            "mm_enabled": self.mm_enabled,
+            "sniper_enabled": self.sniper_enabled,
+            "daily_stop_dollars": self.daily_stop_dollars,
+            "max_gross_exposure_dollars": self.max_gross_exposure_dollars,
+            "max_net_exposure_dollars": self.max_net_exposure_dollars,
+            "max_exposure_per_market_dollars": self.max_exposure_per_market_dollars,
+            "max_order_size_contracts": self.max_order_size_contracts,
+        }
 
 
 _cfg: BotConfig | None = None

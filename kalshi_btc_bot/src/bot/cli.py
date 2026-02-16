@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from pathlib import Path
 from typing import Optional
@@ -18,14 +19,52 @@ app = typer.Typer(name="bot", help="Kalshi BTC Hybrid Bot – Market-Make + Snip
 console = Console()
 
 
+def _apply_config_file(config_path: str) -> None:
+    """Load a JSON config file and inject its values as environment variables."""
+    path = Path(config_path)
+    if not path.exists():
+        console.print(f"[bold red]ERROR:[/] Config file not found: {path}")
+        raise typer.Exit(1)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    env_map = {
+        "environment": "ENVIRONMENT",
+        "key_id": "KALSHI_KEY_ID",
+        "private_key_path": "KALSHI_PRIVATE_KEY_PATH",
+        "live_trading": "LIVE_TRADING",
+        "paper_mode": "PAPER_MODE",
+        "mm_enabled": "MM_ENABLED",
+        "sniper_enabled": "SNIPER_ENABLED",
+        "daily_stop_dollars": "DAILY_STOP_DOLLARS",
+        "max_gross_exposure_dollars": "MAX_GROSS_EXPOSURE_DOLLARS",
+        "max_net_exposure_dollars": "MAX_NET_EXPOSURE_DOLLARS",
+        "max_exposure_per_market_dollars": "MAX_EXPOSURE_PER_MARKET_DOLLARS",
+        "max_order_size_contracts": "MAX_ORDER_SIZE_CONTRACTS",
+    }
+    for json_key, env_key in env_map.items():
+        if json_key in data and data[json_key] is not None:
+            os.environ[env_key] = str(data[json_key])
+
+
 @app.command()
 def run(
     env: str = typer.Option("demo", help="Environment: demo or prod"),
     paper: bool = typer.Option(True, help="Paper trading mode (no real orders)"),
     live: bool = typer.Option(False, help="Enable live trading (requires LIVE_TRADING=true)"),
     log_level: str = typer.Option("INFO", help="Log level"),
+    config: Optional[str] = typer.Option(None, help="Path to JSON config file"),
 ) -> None:
     """Start the hybrid bot."""
+    if config:
+        _apply_config_file(config)
+        # Override env/paper/live from config file if present
+        env = os.environ.get("ENVIRONMENT", env)
+        paper_env = os.environ.get("PAPER_MODE")
+        if paper_env is not None:
+            paper = paper_env.lower() in ("true", "1", "yes")
+        live_env = os.environ.get("LIVE_TRADING")
+        if live_env is not None:
+            live = live_env.lower() in ("true", "1", "yes")
+
     os.environ["ENVIRONMENT"] = env
     if live:
         os.environ["LIVE_TRADING"] = "true"
@@ -52,8 +91,13 @@ def run(
 @app.command()
 def cancel_all(
     env: str = typer.Option("demo", help="Environment: demo or prod"),
+    config: Optional[str] = typer.Option(None, help="Path to JSON config file"),
 ) -> None:
     """Cancel all open orders."""
+    if config:
+        _apply_config_file(config)
+        env = os.environ.get("ENVIRONMENT", env)
+
     os.environ["ENVIRONMENT"] = env
     reset_config()
     setup_logging("INFO")
@@ -75,8 +119,13 @@ def cancel_all(
 @app.command()
 def status(
     env: str = typer.Option("demo", help="Environment: demo or prod"),
+    config: Optional[str] = typer.Option(None, help="Path to JSON config file"),
 ) -> None:
     """Show current portfolio status."""
+    if config:
+        _apply_config_file(config)
+        env = os.environ.get("ENVIRONMENT", env)
+
     os.environ["ENVIRONMENT"] = env
     reset_config()
     setup_logging("WARNING")
