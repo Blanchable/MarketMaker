@@ -273,11 +273,14 @@ class ControlPanel(QWidget):
         self.stop_btn.setEnabled(False)
         self.cancel_btn = QPushButton("Cancel All Orders")
         self.cancel_btn.setObjectName("cancelBtn")
+        self.close_all_btn = QPushButton("Sell All + Cancel Orders")
+        self.close_all_btn.setObjectName("cancelBtn")
         self.logs_btn = QPushButton("Open Logs Folder")
 
         btn_layout.addWidget(self.start_btn)
         btn_layout.addWidget(self.stop_btn)
         btn_layout.addWidget(self.cancel_btn)
+        btn_layout.addWidget(self.close_all_btn)
         btn_layout.addWidget(self.logs_btn)
 
         # Config import/export
@@ -537,6 +540,7 @@ class MainWindow(QMainWindow):
         c.start_btn.clicked.connect(self._on_start)
         c.stop_btn.clicked.connect(self._on_stop)
         c.cancel_btn.clicked.connect(self._on_cancel_all)
+        c.close_all_btn.clicked.connect(self._on_close_all)
         c.logs_btn.clicked.connect(self._on_open_logs)
         c.export_btn.clicked.connect(self._on_export_config)
         c.import_btn.clicked.connect(self._on_import_config)
@@ -620,6 +624,24 @@ class MainWindow(QMainWindow):
             return
         self._log.append_line("Cancelling all orders...")
         self._runner.cancel_all_orders(cfg)
+
+    def _on_close_all(self) -> None:
+        cfg = self._controls.get_config()
+        if not cfg.get("key_id"):
+            QMessageBox.warning(self, "Validation", "Key ID required.")
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Confirm Sell All",
+            "This will cancel ALL open orders and sell ALL open positions at market price.\n\n"
+            "Are you sure?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        self._log.append_line("Selling all positions and cancelling all orders...")
+        self._runner.close_all_positions(cfg)
 
     def _on_open_logs(self) -> None:
         ld = logs_dir()

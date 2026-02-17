@@ -128,6 +128,34 @@ def cancel_all(
 
 
 @app.command()
+def close_all(
+    env: str = typer.Option("demo", help="Environment: demo or prod"),
+    config: Optional[str] = typer.Option(None, help="Path to JSON config file"),
+) -> None:
+    """Cancel all orders AND sell all open positions at market."""
+    if config:
+        _apply_config_file(config)
+        env = os.environ.get("ENVIRONMENT", env)
+
+    os.environ["ENVIRONMENT"] = env
+    reset_config()
+    setup_logging("INFO")
+    cfg = get_config()
+
+    async def _close() -> None:
+        from bot.kalshi.rest import KalshiRestClient
+
+        client = KalshiRestClient(cfg)
+        try:
+            sells = await client.close_all_positions()
+            console.print(f"[green]All orders cancelled, {sells} position(s) closed[/]")
+        finally:
+            await client.close()
+
+    asyncio.run(_close())
+
+
+@app.command()
 def status(
     env: str = typer.Option("demo", help="Environment: demo or prod"),
     config: Optional[str] = typer.Option(None, help="Path to JSON config file"),

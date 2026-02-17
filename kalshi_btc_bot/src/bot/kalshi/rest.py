@@ -281,6 +281,57 @@ class KalshiRestClient:
         data = await self._request("GET", "/portfolio/fills", params=params)
         return [Fill.model_validate(f) for f in _safe_list(data, "fills")]
 
+    async def close_all_positions(self) -> int:
+        """Cancel all orders then sell every open position at market via IOC.
+
+        Returns the number of sell orders submitted.
+        """
+        await self.cancel_all_orders()
+
+        try:
+            positions = await self.get_positions()
+        except httpx.HTTPStatusError as exc:
+            log.warning("close_all_positions: could not list positions: %s", exc)
+            return 0
+
+        sells = 0
+        for pos in positions:
+            qty = pos.position
+            if qty == 0:
+                continue
+
+            if qty > 0:
+                # Long YES → sell YES
+                side, action = "yes", "sell"
+                price = 1  # floor price to ensure fill
+            else:
+                # Short YES → buy YES to close
+                side, action = "yes", "buy"
+                price = 99  # ceiling price to ensure fill
+                qty = abs(qty)
+
+            req = OrderRequest(
+                ticker=pos.ticker,
+                client_order_id=str(uuid.uuid4()),
+                side=side,
+                action=action,
+                count=qty,
+                type="limit",
+                yes_price=price,
+            )
+            try:
+                await self.place_order(req)
+                sells += 1
+                log.info(
+                    "close_all_positions: %s %s %d contracts of %s @%dc",
+                    action, side, qty, pos.ticker, price,
+                )
+            except Exception as exc:
+                log.warning("close_all_positions: failed to sell %s: %s", pos.ticker, exc)
+
+        log.info("close_all_positions: submitted %d sell orders", sells)
+        return sells
+
     # ── Utility ──────────────────────────────────────────────────────
 
     @staticmethod

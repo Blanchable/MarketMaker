@@ -147,6 +147,43 @@ class ProcessRunner(QObject):
         except Exception as exc:
             self.line_received.emit(f"ERROR: cancel-all failed: {exc}")
 
+    def close_all_positions(self, cfg: dict[str, Any]) -> None:
+        """Run the close-all command: cancel orders + sell all positions."""
+        save_config(cfg)
+
+        cmd = [
+            sys.executable, "-m", "bot.cli", "close-all",
+            "--env", cfg.get("environment", "demo"),
+            "--config", str(config_path()),
+        ]
+
+        env = os.environ.copy()
+        if cfg.get("key_id"):
+            env["KALSHI_KEY_ID"] = cfg["key_id"]
+        if cfg.get("private_key_path"):
+            env["KALSHI_PRIVATE_KEY_PATH"] = str(cfg["private_key_path"])
+        if cfg.get("market_mode"):
+            env["MARKET_MODE"] = cfg["market_mode"]
+
+        src_dir = Path(__file__).resolve().parent.parent
+        env["PYTHONPATH"] = str(src_dir) + os.pathsep + env.get("PYTHONPATH", "")
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=env,
+            )
+            self.line_received.emit(result.stdout or "close-all completed")
+            if result.stderr:
+                self.line_received.emit(result.stderr)
+        except subprocess.TimeoutExpired:
+            self.line_received.emit("ERROR: close-all timed out")
+        except Exception as exc:
+            self.line_received.emit(f"ERROR: close-all failed: {exc}")
+
     def _read_output(self) -> None:
         """Background thread: read subprocess stdout line by line."""
         proc = self._proc
