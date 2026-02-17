@@ -204,6 +204,28 @@ class ControlPanel(QWidget):
         self.sniper_check.setChecked(True)
         strat_layout.addWidget(self.mm_check)
         strat_layout.addWidget(self.sniper_check)
+
+        # TP/SL settings inside strategy group
+        tpsl_grid = QGridLayout()
+        tpsl_grid.addWidget(QLabel("Take Profit (%):"), 0, 0)
+        self.take_profit_spin = QDoubleSpinBox()
+        self.take_profit_spin.setRange(0, 500)
+        self.take_profit_spin.setDecimals(1)
+        self.take_profit_spin.setValue(15.0)
+        self.take_profit_spin.setSingleStep(1)
+        self.take_profit_spin.setToolTip("Sell when position is this % above entry (0 = disabled)")
+        tpsl_grid.addWidget(self.take_profit_spin, 0, 1)
+
+        tpsl_grid.addWidget(QLabel("Stop Loss (%):"), 1, 0)
+        self.stop_loss_spin = QDoubleSpinBox()
+        self.stop_loss_spin.setRange(0, 500)
+        self.stop_loss_spin.setDecimals(1)
+        self.stop_loss_spin.setValue(15.0)
+        self.stop_loss_spin.setSingleStep(1)
+        self.stop_loss_spin.setToolTip("Sell when position is this % below entry (0 = disabled)")
+        tpsl_grid.addWidget(self.stop_loss_spin, 1, 1)
+
+        strat_layout.addLayout(tpsl_grid)
         layout.addWidget(strat_group)
 
         # ── Risk Settings ──
@@ -312,6 +334,8 @@ class ControlPanel(QWidget):
             "private_key_path": self.key_path_input.text().strip(),
             "mm_enabled": self.mm_check.isChecked(),
             "sniper_enabled": self.sniper_check.isChecked(),
+            "mm_take_profit_pct": self.take_profit_spin.value(),
+            "mm_stop_loss_pct": self.stop_loss_spin.value(),
             "daily_stop_dollars": self.daily_stop.value(),
             "max_gross_exposure_dollars": self.max_gross.value(),
             "max_net_exposure_dollars": self.max_net.value(),
@@ -335,6 +359,8 @@ class ControlPanel(QWidget):
 
         self.mm_check.setChecked(cfg.get("mm_enabled", True))
         self.sniper_check.setChecked(cfg.get("sniper_enabled", True))
+        self.take_profit_spin.setValue(cfg.get("mm_take_profit_pct", 15.0))
+        self.stop_loss_spin.setValue(cfg.get("mm_stop_loss_pct", 15.0))
         self.daily_stop.setValue(cfg.get("daily_stop_dollars", 200))
         self.max_gross.setValue(cfg.get("max_gross_exposure_dollars", 250))
         self.max_net.setValue(cfg.get("max_net_exposure_dollars", 150))

@@ -1,8 +1,8 @@
-"""Market-making strategy – provide two-sided liquidity in BTC binary markets."""
+"""Market-making strategy – provide two-sided liquidity with auto take-profit / stop-loss."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from bot.config import BotConfig, get_config
 from bot.infra.log import get_logger
@@ -22,6 +22,15 @@ class QuotePair:
     bid_price: int  # cents, YES side
     ask_price: int  # cents, YES side
     size: int
+
+
+@dataclass
+class TrackedFill:
+    """Records the average entry price for a position acquired via MM."""
+    ticker: str
+    side: str           # "yes"
+    entry_price: float  # cents, weighted average
+    quantity: int       # contracts held
 
 
 def compute_quotes(
@@ -79,7 +88,7 @@ def compute_quotes(
 
 
 class MarketMakerStrategy:
-    """Manages two-sided quotes across all tradeable BTC markets."""
+    """Manages two-sided quotes with automatic take-profit / stop-loss exits."""
 
     def __init__(
         self,
@@ -90,6 +99,105 @@ class MarketMakerStrategy:
         self.order_mgr = order_mgr
         self.risk = risk
         self.cfg = cfg or get_config()
+        # ticker -> TrackedFill for positions entered via MM bids
+        self._entries: dict[str, TrackedFill] = {}
+
+    def record_entry(self, ticker: str, price_cents: int, quantity: int) -> None:
+        """Record or update the average entry price when a MM bid is filled."""
+        existing = self._entries.get(ticker)
+        if existing and existing.quantity > 0:
+            total_qty = existing.quantity + quantity
+            existing.entry_price = (
+                (existing.entry_price * existing.quantity + price_cents * quantity)
+                / total_qty
+            )
+            existing.quantity = total_qty
+        else:
+            self._entries[ticker] = TrackedFill(
+                ticker=ticker,
+                side="yes",
+                entry_price=float(price_cents),
+                quantity=quantity,
+            )
+        log.info(
+            "MM entry recorded: %s %d@%dc (avg=%.1fc qty=%d)",
+            ticker, quantity, price_cents,
+            self._entries[ticker].entry_price,
+            self._entries[ticker].quantity,
+        )
+
+    def record_exit(self, ticker: str, quantity: int) -> None:
+        """Reduce tracked position after a sell fill."""
+        entry = self._entries.get(ticker)
+        if entry:
+            entry.quantity = max(0, entry.quantity - quantity)
+            if entry.quantity == 0:
+                del self._entries[ticker]
+
+    def seed_entry_from_position(self, ticker: str, position_qty: int, mid_price: float) -> None:
+        """Seed entry tracking from an existing portfolio position (e.g. on startup).
+
+        Uses the current mid as the assumed entry price since we don't know
+        the actual fill price for positions opened before this session.
+        """
+        if position_qty > 0 and ticker not in self._entries:
+            self._entries[ticker] = TrackedFill(
+                ticker=ticker,
+                side="yes",
+                entry_price=mid_price,
+                quantity=position_qty,
+            )
+
+    async def check_exit(
+        self,
+        ticker: str,
+        current_mid: float,
+    ) -> bool:
+        """Check if a held position should be exited (take-profit or stop-loss).
+
+        Returns True if an exit order was sent.
+        """
+        entry = self._entries.get(ticker)
+        if not entry or entry.quantity <= 0 or entry.entry_price <= 0:
+            return False
+
+        tp_pct = self.cfg.mm_take_profit_pct
+        sl_pct = self.cfg.mm_stop_loss_pct
+
+        pct_change = ((current_mid - entry.entry_price) / entry.entry_price) * 100.0
+
+        exit_reason = ""
+        if tp_pct > 0 and pct_change >= tp_pct:
+            exit_reason = "TAKE-PROFIT"
+        elif sl_pct > 0 and pct_change <= -sl_pct:
+            exit_reason = "STOP-LOSS"
+
+        if not exit_reason:
+            return False
+
+        sell_price = max(1, min(99, round(current_mid)))
+
+        log.info(
+            "MM %s: %s entry=%.1fc mid=%.1fc pct=%+.1f%% -> sell %d@%dc",
+            exit_reason, ticker,
+            entry.entry_price, current_mid, pct_change,
+            entry.quantity, sell_price,
+        )
+        metrics.inc(f"mm_{exit_reason.lower().replace('-', '_')}")
+
+        resp = await self.order_mgr.place_order(
+            ticker=ticker,
+            side="yes",
+            action="sell",
+            price_cents=sell_price,
+            size=entry.quantity,
+            tif="immediate_or_cancel",
+        )
+
+        if resp:
+            self.record_exit(ticker, entry.quantity)
+
+        return True
 
     async def update(
         self,
@@ -99,10 +207,21 @@ class MarketMakerStrategy:
         net_position: int,
         risk_snap: RiskSnapshot,
     ) -> None:
-        """Compute and send/update quotes for one market."""
+        """Compute and send/update quotes for one market.
+
+        Also checks take-profit / stop-loss for any held inventory.
+        """
         if not self.cfg.mm_enabled:
             return
 
+        # ── Check TP/SL on existing positions first ──────────────────
+        if net_position > 0 and ws.mid > 0:
+            self.seed_entry_from_position(market.ticker, net_position, ws.mid)
+            exited = await self.check_exit(market.ticker, ws.mid)
+            if exited:
+                return  # position just exited, skip quoting this tick
+
+        # ── Compute and place/update quotes ──────────────────────────
         max_contracts = self.risk.max_additional_contracts(market.ticker, risk_snap)
         quotes = compute_quotes(market, ws, fv, net_position, max_contracts, self.cfg)
 

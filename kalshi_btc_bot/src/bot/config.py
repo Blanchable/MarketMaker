@@ -77,6 +77,8 @@ class BotConfig(BaseSettings):
     mm_inventory_skew: float = 0.25
     mm_cancel_requote_ms: int = 800
     mm_only_when_vol_below: float = 0.55
+    mm_take_profit_pct: float = 15.0   # sell position when mid is this % above entry
+    mm_stop_loss_pct: float = 15.0     # sell position when mid is this % below entry
 
     # ── Sniper ───────────────────────────────────────────────────────
     sniper_enabled: bool = True
