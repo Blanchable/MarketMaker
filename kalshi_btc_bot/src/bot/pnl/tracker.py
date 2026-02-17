@@ -23,12 +23,14 @@ from bot.infra.log import get_logger
 
 log = get_logger(__name__)
 
+from datetime import timezone as _tz
+
 try:
     from zoneinfo import ZoneInfo
-except ImportError:
-    from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
-
-_ET = ZoneInfo("America/New_York")
+    _ET = ZoneInfo("America/New_York")
+except Exception:
+    # Windows without tzdata, or very old Python: fall back to fixed UTC-5
+    _ET = _tz(timedelta(hours=-5))
 
 
 # ── Data structures ──────────────────────────────────────────────────────────
