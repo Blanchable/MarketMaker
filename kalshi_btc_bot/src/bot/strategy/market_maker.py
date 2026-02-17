@@ -161,15 +161,15 @@ class MarketMakerStrategy:
         if not entry or entry.quantity <= 0 or entry.entry_price <= 0:
             return False
 
-        tp_pct = self.cfg.mm_take_profit_pct
-        sl_pct = self.cfg.mm_stop_loss_pct
+        tp_cents = self.cfg.mm_take_profit_cents
+        sl_cents = self.cfg.mm_stop_loss_cents
 
-        pct_change = ((current_mid - entry.entry_price) / entry.entry_price) * 100.0
+        diff = current_mid - entry.entry_price  # positive = profit
 
         exit_reason = ""
-        if tp_pct > 0 and pct_change >= tp_pct:
+        if tp_cents > 0 and diff >= tp_cents:
             exit_reason = "TAKE-PROFIT"
-        elif sl_pct > 0 and pct_change <= -sl_pct:
+        elif sl_cents > 0 and diff <= -sl_cents:
             exit_reason = "STOP-LOSS"
 
         if not exit_reason:
@@ -178,9 +178,9 @@ class MarketMakerStrategy:
         sell_price = max(1, min(99, round(current_mid)))
 
         log.info(
-            "MM %s: %s entry=%.1fc mid=%.1fc pct=%+.1f%% -> sell %d@%dc",
+            "MM %s: %s entry=%.1fc mid=%.1fc diff=%+.1fc -> sell %d@%dc",
             exit_reason, ticker,
-            entry.entry_price, current_mid, pct_change,
+            entry.entry_price, current_mid, diff,
             entry.quantity, sell_price,
         )
         metrics.inc(f"mm_{exit_reason.lower().replace('-', '_')}")
