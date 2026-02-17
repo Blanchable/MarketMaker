@@ -24,6 +24,7 @@ _DEFAULTS: dict[str, Any] = {
     "max_net_exposure_dollars": 150.0,
     "max_exposure_per_market_dollars": 125.0,
     "max_order_size_contracts": 25,
+    "max_markets": 50,
 }
 
 

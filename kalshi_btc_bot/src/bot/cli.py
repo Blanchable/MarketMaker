@@ -50,6 +50,7 @@ def _apply_config_file(config_path: str) -> None:
         "max_net_exposure_dollars": "MAX_NET_EXPOSURE_DOLLARS",
         "max_exposure_per_market_dollars": "MAX_EXPOSURE_PER_MARKET_DOLLARS",
         "max_order_size_contracts": "MAX_ORDER_SIZE_CONTRACTS",
+        "max_markets": "MAX_MARKETS",
     }
     for json_key, env_key in env_map.items():
         if json_key in data and data[json_key] is not None:

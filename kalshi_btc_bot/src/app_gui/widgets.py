@@ -152,31 +152,11 @@ class ControlPanel(QWidget):
         strat_vbox.addWidget(self.mm_check)
         strat_vbox.addWidget(self.sniper_check)
 
-        tp_row = QHBoxLayout()
-        tp_row.setSpacing(3)
-        tp_row.addWidget(QLabel("TP%:"))
-        self.take_profit_spin = QDoubleSpinBox()
-        self.take_profit_spin.setRange(0, 500)
-        self.take_profit_spin.setDecimals(1)
-        self.take_profit_spin.setValue(15.0)
-        self.take_profit_spin.setSingleStep(1)
-        self.take_profit_spin.setToolTip("Auto-sell when position is this % above entry (0 = off)")
-        tp_row.addWidget(self.take_profit_spin)
-        tp_row.addWidget(QLabel("SL%:"))
-        self.stop_loss_spin = QDoubleSpinBox()
-        self.stop_loss_spin.setRange(0, 500)
-        self.stop_loss_spin.setDecimals(1)
-        self.stop_loss_spin.setValue(15.0)
-        self.stop_loss_spin.setSingleStep(1)
-        self.stop_loss_spin.setToolTip("Auto-sell when position is this % below entry (0 = off)")
-        tp_row.addWidget(self.stop_loss_spin)
-        strat_vbox.addLayout(tp_row)
-
         top_row.addWidget(strat_group)
         layout.addLayout(top_row)
 
-        # ── Row 2: Risk Settings (compact grid) ──
-        risk_group = QGroupBox("Risk Limits")
+        # ── Row 2: Risk & Exit Settings ──
+        risk_group = QGroupBox("Risk Limits & Auto-Exit")
         risk_grid = QGridLayout(risk_group)
         risk_grid.setSpacing(4)
         self.daily_stop = self._spin(risk_grid, 0, 0, "Daily Stop $", 200, 0, 10000)
@@ -184,6 +164,18 @@ class ControlPanel(QWidget):
         self.max_net = self._spin(risk_grid, 1, 0, "Net Exp $", 150, 0, 50000)
         self.max_per_mkt = self._spin(risk_grid, 1, 2, "Per Mkt $", 125, 0, 10000)
         self.max_order = self._int_spin(risk_grid, 2, 0, "Order Size", 25, 1, 500)
+        self.max_markets = self._int_spin(risk_grid, 2, 2, "Max Mkts", 50, 1, 5000)
+
+        # Take-profit / stop-loss as full-width rows
+        self.take_profit_spin = self._spin(risk_grid, 3, 0, "Take Profit %", 15.0, 0, 500)
+        self.take_profit_spin.setDecimals(1)
+        self.take_profit_spin.setSingleStep(1)
+        self.take_profit_spin.setToolTip("Auto-sell when position is this % above entry price (0 = off)")
+        self.stop_loss_spin = self._spin(risk_grid, 3, 2, "Stop Loss %", 15.0, 0, 500)
+        self.stop_loss_spin.setDecimals(1)
+        self.stop_loss_spin.setSingleStep(1)
+        self.stop_loss_spin.setToolTip("Auto-sell when position is this % below entry price (0 = off)")
+
         layout.addWidget(risk_group)
 
         # ── Row 3: Credentials (single row) ──
@@ -280,6 +272,7 @@ class ControlPanel(QWidget):
             "max_net_exposure_dollars": self.max_net.value(),
             "max_exposure_per_market_dollars": self.max_per_mkt.value(),
             "max_order_size_contracts": self.max_order.value(),
+            "max_markets": self.max_markets.value(),
         }
 
     def set_config(self, cfg: dict[str, Any]) -> None:
@@ -297,6 +290,7 @@ class ControlPanel(QWidget):
         self.max_net.setValue(cfg.get("max_net_exposure_dollars", 150))
         self.max_per_mkt.setValue(cfg.get("max_exposure_per_market_dollars", 125))
         self.max_order.setValue(int(cfg.get("max_order_size_contracts", 25)))
+        self.max_markets.setValue(int(cfg.get("max_markets", 50)))
         self.key_id_input.setText(cfg.get("key_id", ""))
         self.key_path_input.setText(cfg.get("private_key_path", ""))
 

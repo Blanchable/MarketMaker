@@ -68,6 +68,7 @@ class BotConfig(BaseSettings):
     max_net_exposure_dollars: float = 150.0
     max_exposure_per_market_dollars: float = 125.0
     max_order_size_contracts: int = 25
+    max_markets: int = 50
     no_trade_window_seconds: int = 300
 
     # ── Market-Making ────────────────────────────────────────────────

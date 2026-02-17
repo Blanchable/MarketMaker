@@ -267,9 +267,7 @@ class MarketDiscovery:
                 complementary_ticker=comp_ticker,
             ))
 
-        self.tradeable = tradeable
-        self._log_diagnostics(tradeable, candidates, diag, diag_samples)
-        return tradeable
+        return self._finalize(tradeable, candidates, diag, diag_samples)
 
     # ── Crypto discovery (BTC) ───────────────────────────────────────
 
@@ -390,20 +388,31 @@ class MarketDiscovery:
                 has_book=has_book,
             ))
 
-        self.tradeable = tradeable
-        self._log_diagnostics(tradeable, candidates, diag, diag_samples)
-        return tradeable
+        return self._finalize(tradeable, candidates, diag, diag_samples)
 
-    # ── Shared diagnostics logging ───────────────────────────────────
+    # ── Shared finalize + diagnostics ────────────────────────────────
 
-    def _log_diagnostics(
+    def _finalize(
         self,
         tradeable: list[TradeableMarket],
         candidates: list[Market],
         diag: dict[str, int],
         diag_samples: dict[str, list[str]],
-    ) -> None:
-        log.info("Tradeable markets after filters: %d", len(tradeable))
+    ) -> list[TradeableMarket]:
+        """Sort by tightest spread, cap to max_markets, log diagnostics, assign."""
+        # Prefer markets with the tightest spreads (best for MM)
+        tradeable.sort(key=lambda m: (m.spread if m.spread > 0 else 9999, m.ticker))
+
+        # Enforce max_markets cap
+        cap = self.cfg.max_markets
+        before = len(tradeable)
+        if cap > 0 and len(tradeable) > cap:
+            tradeable = tradeable[:cap]
+            diag["capped_by_max_markets"] = before - cap
+
+        self.tradeable = tradeable
+
+        log.info("Tradeable markets after filters: %d (cap=%d)", len(tradeable), cap)
         if diag:
             parts = [f"{r}={c}" for r, c in sorted(diag.items())]
             log.info("Filter diagnostics: %s", "  ".join(parts))
@@ -416,3 +425,4 @@ class MarketDiscovery:
                 len(candidates), self.cfg.environment,
                 self.cfg.effective_min_spread, self.cfg.effective_max_spread,
             )
+        return tradeable
