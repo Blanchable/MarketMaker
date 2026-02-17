@@ -1,4 +1,4 @@
-"""Portfolio tracker – positions, balance, fills snapshot."""
+"""Portfolio tracker – positions, balance, fills snapshot + PnL ingestion."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from bot.config import BotConfig, get_config
 from bot.infra.log import get_logger
 from bot.kalshi.models import Balance, Fill, Position
 from bot.kalshi.rest import KalshiRestClient
+from bot.pnl.tracker import PnlTracker
 
 log = get_logger(__name__)
 
@@ -35,12 +36,18 @@ class PortfolioSnapshot:
 
 
 class PortfolioTracker:
-    """Periodically polls Kalshi portfolio endpoints."""
+    """Periodically polls Kalshi portfolio endpoints and feeds fills to PnlTracker."""
 
-    def __init__(self, rest: KalshiRestClient, cfg: BotConfig | None = None) -> None:
+    def __init__(
+        self,
+        rest: KalshiRestClient,
+        cfg: BotConfig | None = None,
+        pnl_tracker: PnlTracker | None = None,
+    ) -> None:
         self.rest = rest
         self.cfg = cfg or get_config()
         self.snapshot = PortfolioSnapshot()
+        self.pnl = pnl_tracker
 
     async def refresh(self) -> PortfolioSnapshot:
         try:
@@ -55,7 +62,11 @@ class PortfolioTracker:
             log.warning("Failed to refresh positions: %s", exc)
 
         try:
-            self.snapshot.fills_today = await self.rest.get_fills(limit=200)
+            fills = await self.rest.get_fills(limit=200)
+            self.snapshot.fills_today = fills
+            if self.pnl:
+                for f in fills:
+                    self.pnl.ingest_kalshi_fill(f)
         except Exception as exc:
             log.warning("Failed to refresh fills: %s", exc)
 

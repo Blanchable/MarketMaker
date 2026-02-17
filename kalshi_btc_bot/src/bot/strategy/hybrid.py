@@ -16,6 +16,7 @@ from bot.kalshi.order_manager import OrderManager
 from bot.kalshi.portfolio import PortfolioTracker
 from bot.kalshi.rest import KalshiRestClient
 from bot.kalshi.ws import KalshiWsClient
+from bot.pnl.tracker import PnlTracker
 from bot.pricing.btc_feed import BtcSpotFeed
 from bot.pricing.fair_value import FairValueEngine
 from bot.pricing.vol import VolEstimator
@@ -44,9 +45,10 @@ class HybridController:
         self.spot_feed = spot_feed
         self.paper = paper
 
+        self.pnl_tracker = PnlTracker()
         self.order_mgr = OrderManager(rest, self.cfg)
-        self.risk = RiskEngine(self.cfg)
-        self.portfolio = PortfolioTracker(rest, self.cfg)
+        self.risk = RiskEngine(self.cfg, pnl_tracker=self.pnl_tracker)
+        self.portfolio = PortfolioTracker(rest, self.cfg, pnl_tracker=self.pnl_tracker)
         self.discovery = MarketDiscovery(rest, self.cfg)
         self.fv_engine = FairValueEngine()
         self.vol = VolEstimator(sample_interval_sec=5.0)
@@ -118,6 +120,7 @@ class HybridController:
         if self.spot_feed:
             await self.spot_feed.close()
         await self.rest.close()
+        self.pnl_tracker.close()
 
     async def _spot_loop(self) -> None:
         while self._running and self.spot_feed:
@@ -158,8 +161,10 @@ class HybridController:
             "connected": self.ws.is_connected,
             "spot": round(spot, 2) if spot else 0.0,
             "vol": round(sigma, 4),
-            "pnl_realized_today": round(risk_snap.realized_pnl_today, 2) if risk_snap else 0.0,
+            "pnl_realized_today": round(self.pnl_tracker.realized_today, 2),
+            "pnl_realized_total": round(self.pnl_tracker.realized_total, 2),
             "pnl_unrealized": round(risk_snap.unrealized_pnl, 2) if risk_snap else 0.0,
+            "fees_today": round(self.pnl_tracker.fees_today, 2),
             "gross_exposure": round(risk_snap.gross_exposure, 2) if risk_snap else 0.0,
             "net_exposure": round(risk_snap.net_exposure, 2) if risk_snap else 0.0,
             "kill_switch": risk_snap.kill_switch_triggered if risk_snap else False,
@@ -200,6 +205,7 @@ class HybridController:
             except Exception:
                 pass
             self._last_status_emit = now
+            self.pnl_tracker.log_diagnostics()
 
         if risk_snap.kill_switch_triggered:
             log.critical("Kill switch active: %s – cancelling all", risk_snap.kill_reason)

@@ -315,8 +315,9 @@ class StatusPanel(QWidget):
         self.mode_card = StatusCard("Market Mode", "—")
         self.tradeable_card = StatusCard("Tradeable", "—")
         self.subscribed_card = StatusCard("Subscribed", "—")
-        self.pnl_realized = StatusCard("Realized PnL", "—")
-        self.pnl_unrealized = StatusCard("Unrealized PnL", "—")
+        self.pnl_realized = StatusCard("Realized Today", "—")
+        self.pnl_total = StatusCard("Realized Total", "—")
+        self.pnl_unrealized = StatusCard("Unrealized", "—")
         self.gross_exp = StatusCard("Gross Exposure", "—")
         self.net_exp = StatusCard("Net Exposure", "—")
         self.kill_switch = StatusCard("Kill Switch", "INACTIVE")
@@ -327,9 +328,10 @@ class StatusPanel(QWidget):
         grid.addWidget(self.subscribed_card, 0, 3)
         grid.addWidget(self.kill_switch, 0, 4)
         grid.addWidget(self.pnl_realized, 1, 0)
-        grid.addWidget(self.pnl_unrealized, 1, 1)
-        grid.addWidget(self.gross_exp, 1, 2)
-        grid.addWidget(self.net_exp, 1, 3)
+        grid.addWidget(self.pnl_total, 1, 1)
+        grid.addWidget(self.pnl_unrealized, 1, 2)
+        grid.addWidget(self.gross_exp, 1, 3)
+        grid.addWidget(self.net_exp, 1, 4)
 
         outer.addLayout(grid)
 
@@ -345,6 +347,8 @@ class StatusPanel(QWidget):
 
         pnl_r = data.get("pnl_realized_today", 0)
         self.pnl_realized.set_value(f"${pnl_r:+.2f}", "#a6e3a1" if pnl_r >= 0 else "#f38ba8")
+        pnl_t = data.get("pnl_realized_total", 0)
+        self.pnl_total.set_value(f"${pnl_t:+.2f}", "#a6e3a1" if pnl_t >= 0 else "#f38ba8")
         pnl_u = data.get("pnl_unrealized", 0)
         self.pnl_unrealized.set_value(f"${pnl_u:+.2f}", "#a6e3a1" if pnl_u >= 0 else "#f38ba8")
 
