@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -20,16 +21,16 @@ log = get_logger(__name__)
 @dataclass
 class LiveOrder:
     """Tracks a resting order on Kalshi."""
-
     order_id: str
     client_order_id: str
     ticker: str
-    side: str  # "yes" or "no"
-    action: str  # "buy" or "sell"
+    side: str
+    action: str
     price_cents: int
     size: int
     placed_ms: int = 0
     post_only: bool = False
+    earliest_requote_ms: int = 0  # jittered next-requote time
 
 
 class OrderManager:
@@ -38,9 +39,10 @@ class OrderManager:
     def __init__(self, rest: KalshiRestClient, cfg: BotConfig | None = None) -> None:
         self.rest = rest
         self.cfg = cfg or get_config()
-        self._open: dict[str, LiveOrder] = {}  # order_id -> LiveOrder
-        self._bid_by_ticker: dict[str, str] = {}  # ticker -> order_id
-        self._ask_by_ticker: dict[str, str] = {}  # ticker -> order_id
+        self._open: dict[str, LiveOrder] = {}
+        self._bid_by_ticker: dict[str, str] = {}
+        self._ask_by_ticker: dict[str, str] = {}
+        self._cancel_counts: dict[str, int] = {}  # ticker -> cancel count for diagnostics
 
     @property
     def open_orders(self) -> dict[str, LiveOrder]:
@@ -65,7 +67,6 @@ class OrderManager:
         post_only: bool = False,
         tif: str | None = None,
     ) -> OrderResponse | None:
-        """Place an order and track it internally."""
         coid = str(uuid.uuid4())
         req = OrderRequest(
             ticker=ticker,
@@ -80,8 +81,6 @@ class OrderManager:
         else:
             req.no_price = price_cents
 
-        if tif == "immediate_or_cancel":
-            req.expiration_time = None  # IOC handled via TIF in some APIs
         try:
             resp = await self.rest.place_order(req)
         except Exception as exc:
@@ -89,6 +88,8 @@ class OrderManager:
             return None
 
         if resp.order_id:
+            requote_ms = self.cfg.mm_cancel_requote_ms
+            jitter = int(requote_ms * random.uniform(-0.2, 0.2))
             lo = LiveOrder(
                 order_id=resp.order_id,
                 client_order_id=coid,
@@ -99,6 +100,7 @@ class OrderManager:
                 size=size,
                 placed_ms=now_ms(),
                 post_only=post_only,
+                earliest_requote_ms=now_ms() + requote_ms + jitter,
             )
             self._open[resp.order_id] = lo
             if action == "buy" and side == "yes":
@@ -115,6 +117,7 @@ class OrderManager:
     async def cancel_order(self, order_id: str) -> bool:
         lo = self._open.pop(order_id, None)
         if lo:
+            self._cancel_counts[lo.ticker] = self._cancel_counts.get(lo.ticker, 0) + 1
             for d in (self._bid_by_ticker, self._ask_by_ticker):
                 if d.get(lo.ticker) == order_id:
                     del d[lo.ticker]
@@ -147,33 +150,48 @@ class OrderManager:
         *,
         post_only: bool = True,
     ) -> OrderResponse | None:
-        """Cancel existing quote on one side and replace with new price."""
         existing_oid = (self._bid_by_ticker if is_bid else self._ask_by_ticker).get(ticker)
         if existing_oid:
             existing = self._open.get(existing_oid)
             if existing and existing.price_cents == new_price and existing.size == size:
-                return None  # no change needed
+                return None
             await self.cancel_order(existing_oid)
         return await self.place_order(
             ticker, side, action, new_price, size, post_only=post_only
         )
 
     def should_requote(self, ticker: str, is_bid: bool, desired_price: int) -> bool:
-        """Check if resting order differs from desired price or is stale."""
+        """Decide whether to cancel/replace a resting order.
+
+        Priority: price change > time-based staleness.
+        Time-based uses jittered earliest_requote_ms to avoid synchronised cancels.
+        """
         existing_oid = (self._bid_by_ticker if is_bid else self._ask_by_ticker).get(ticker)
         if not existing_oid:
             return True
         existing = self._open.get(existing_oid)
         if not existing:
             return True
-        if abs(existing.price_cents - desired_price) >= 1:
+
+        price_diff = abs(existing.price_cents - desired_price)
+
+        # Immediate requote if price moved beyond threshold
+        if price_diff >= self.cfg.mm_requote_price_threshold:
             return True
-        if (now_ms() - existing.placed_ms) > self.cfg.mm_cancel_requote_ms:
+
+        # Time-based requote with jitter
+        if now_ms() >= existing.earliest_requote_ms:
             return True
+
         return False
 
+    def get_cancel_counts(self) -> dict[str, int]:
+        """Return and reset per-ticker cancel counts for diagnostics."""
+        counts = dict(self._cancel_counts)
+        self._cancel_counts.clear()
+        return counts
+
     async def reconcile(self) -> None:
-        """Sync internal state with Kalshi portfolio orders."""
         try:
             live = await self.rest.get_orders(status="resting")
         except Exception as exc:

@@ -206,6 +206,7 @@ class HybridController:
                 pass
             self._last_status_emit = now
             self.pnl_tracker.log_diagnostics()
+            self.mm.log_diagnostics()
 
         if risk_snap.kill_switch_triggered:
             log.critical("Kill switch active: %s – cancelling all", risk_snap.kill_reason)
