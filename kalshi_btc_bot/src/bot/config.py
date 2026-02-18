@@ -43,7 +43,7 @@ class BotConfig(BaseSettings):
     market_status: str = "open"
     min_24h_volume: int = 0
     max_spread_cents: int = 15
-    min_spread_cents: int = 2
+    min_spread_cents: int = 6
     min_depth_contracts: int = 0
 
     # ── Demo-relaxed discovery filters ───────────────────────────────
@@ -74,17 +74,19 @@ class BotConfig(BaseSettings):
     # ── Market-Making ────────────────────────────────────────────────
     mm_enabled: bool = True
     mm_quote_size_contracts: int = 10
-    mm_edge_cents: int = 2           # half-spread from fair: bid=fair-edge, ask=fair+edge
+    mm_edge_cents: int = 3           # half-spread from fair: bid=fair-edge, ask=fair+edge
+    mm_improve_inside_cents: int = 1  # step inside best bid/ask when spread is wide
     mm_inventory_skew: float = 0.25
     mm_cancel_requote_ms: int = 15000  # age before time-based requote (ms)
     mm_requote_price_threshold: int = 2  # cents price change to force immediate requote
+    mm_min_rest_ms: int = 3000       # minimum order resting time before any requote
     mm_only_when_vol_below: float = 0.55
     mm_take_profit_cents: int = 5
     mm_stop_loss_cents: int = 5
     mm_exit_cooldown_ms: int = 5000  # freeze quoting after TP/SL exit (ms)
 
     # ── Sniper ───────────────────────────────────────────────────────
-    sniper_enabled: bool = True
+    sniper_enabled: bool = False
     sniper_min_edge_cents: int = 6
     sniper_max_slippage_cents: int = 2
     sniper_order_tif: str = "immediate_or_cancel"

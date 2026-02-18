@@ -148,7 +148,7 @@ class ControlPanel(QWidget):
         self.mm_check = QCheckBox("Market Making")
         self.mm_check.setChecked(True)
         self.sniper_check = QCheckBox("Sniper")
-        self.sniper_check.setChecked(True)
+        self.sniper_check.setChecked(False)
         strat_vbox.addWidget(self.mm_check)
         strat_vbox.addWidget(self.sniper_check)
 

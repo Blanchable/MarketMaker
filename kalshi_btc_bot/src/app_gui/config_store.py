@@ -16,7 +16,7 @@ _DEFAULTS: dict[str, Any] = {
     "key_id": "",
     "private_key_path": "",
     "mm_enabled": True,
-    "sniper_enabled": True,
+    "sniper_enabled": False,
     "mm_take_profit_cents": 5,
     "mm_stop_loss_cents": 5,
     "daily_stop_dollars": 200.0,

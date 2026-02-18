@@ -163,8 +163,12 @@ class OrderManager:
     def should_requote(self, ticker: str, is_bid: bool, desired_price: int) -> bool:
         """Decide whether to cancel/replace a resting order.
 
-        Priority: price change > time-based staleness.
-        Time-based uses jittered earliest_requote_ms to avoid synchronised cancels.
+        Rules (in order):
+        1. No existing order -> place new.
+        2. Order younger than mm_min_rest_ms -> never requote (unless would cross book).
+        3. Price moved >= mm_requote_price_threshold -> requote.
+        4. Jittered time deadline passed -> requote (safety refresh).
+        5. Otherwise -> keep resting.
         """
         existing_oid = (self._bid_by_ticker if is_bid else self._ask_by_ticker).get(ticker)
         if not existing_oid:
@@ -173,13 +177,18 @@ class OrderManager:
         if not existing:
             return True
 
+        age_ms = now_ms() - existing.placed_ms
         price_diff = abs(existing.price_cents - desired_price)
 
-        # Immediate requote if price moved beyond threshold
+        # Respect minimum resting time: only override for large price moves
+        if age_ms < self.cfg.mm_min_rest_ms:
+            return price_diff >= 3  # only requote young orders on large moves
+
+        # Price-based requote
         if price_diff >= self.cfg.mm_requote_price_threshold:
             return True
 
-        # Time-based requote with jitter
+        # Jittered time-based refresh
         if now_ms() >= existing.earliest_requote_ms:
             return True
 

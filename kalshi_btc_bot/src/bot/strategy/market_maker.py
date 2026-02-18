@@ -63,15 +63,29 @@ def compute_quotes(
         return None
 
     edge = cfg.mm_edge_cents
+    improve = cfg.mm_improve_inside_cents
 
-    # Inventory skew
+    # Inventory skew: push quotes to encourage unwinding
     skew = 0
     if net_position != 0:
         skew = round(net_position * cfg.mm_inventory_skew)
 
     # Edge-based quotes around fair value
-    desired_bid = fair - edge - skew
-    desired_ask = fair + edge - skew
+    base_bid = fair - edge - skew
+    base_ask = fair + edge - skew
+
+    # Inside improvement: step inside best bid/ask when spread is wide enough
+    spread = yes_ask - yes_bid
+    if spread >= 2 * improve + 2:
+        improved_bid = yes_bid + improve
+        improved_ask = yes_ask - improve
+    else:
+        improved_bid = yes_bid
+        improved_ask = yes_ask
+
+    # Pick the tighter (closer to mid) of edge-based and improved quotes
+    desired_bid = max(base_bid, improved_bid)
+    desired_ask = min(base_ask, improved_ask)
 
     # Post-only guard: never cross the book
     desired_bid = min(desired_bid, yes_ask - 1)
@@ -221,19 +235,30 @@ class MarketMakerStrategy:
         )
         metrics.inc(f"mm_{exit_reason.lower().replace('-', '_')}")
 
+        exit_qty = entry.quantity
+
         resp = await self.order_mgr.place_order(
             ticker=ticker,
             side="yes",
             action="sell",
             price_cents=sell_price,
-            size=entry.quantity,
+            size=exit_qty,
             tif="immediate_or_cancel",
         )
 
+        # Do NOT assume full fill. Track as pending exit.
+        # Actual fill reconciliation happens via PnL tracker / portfolio refresh.
         if resp:
-            self.record_exit(ticker, entry.quantity, sell_price)
+            filled = exit_qty - resp.remaining_count
+            if filled > 0:
+                self.record_exit(ticker, filled, sell_price)
+                log.info("MM exit filled %d / %d for %s", filled, exit_qty, ticker)
+            else:
+                log.warning("MM exit IOC got 0 fills for %s (book too thin?)", ticker)
+        else:
+            log.warning("MM exit order submission failed for %s", ticker)
 
-        # Lock quoting for this ticker
+        # Lock quoting for this ticker regardless
         self._set_exit_lock(ticker)
         return True
 
@@ -310,6 +335,9 @@ class MarketMakerStrategy:
             top = sorted(cancel_counts.items(), key=lambda x: -x[1])[:5]
             churn = ", ".join(f"{t}={c}" for t, c in top)
             log.info("MM churn (cancels/min): %s", churn)
+            for t, c in top:
+                if c > 10:
+                    log.warning("HIGH CHURN: %s had %d cancels/min — increase requote_ms or threshold", t, c)
 
         active_entries = [(t, e) for t, e in self._entries.items() if e.quantity > 0]
         if active_entries:

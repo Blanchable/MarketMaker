@@ -15,7 +15,7 @@ from bot.strategy.market_maker import compute_quotes
 def cfg() -> BotConfig:
     return BotConfig(
         mm_quote_size_contracts=10,
-        mm_edge_cents=2,
+        mm_edge_cents=3,
         mm_inventory_skew=0.25,
         max_order_size_contracts=25,
     )

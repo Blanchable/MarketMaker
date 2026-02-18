@@ -134,19 +134,37 @@ class TestEdgeQuotes:
         ws.yes_ask = 55
         fv = FairValue(ticker="T", fair_cents=50, confidence=0.9)
 
-        # edge=2: bid=48, ask=52
-        cfg2 = BotConfig(mm_edge_cents=2, mm_quote_size_contracts=5, max_order_size_contracts=25)
-        q2 = compute_quotes(mkt, ws, fv, 0, 25, cfg2)
-        assert q2 is not None
-        assert q2.bid_price == 48
-        assert q2.ask_price == 52
+        # edge=2, improve=0: bid=fair-2=48, ask=fair+2=52
+        cfg_no_improve = BotConfig(mm_edge_cents=2, mm_improve_inside_cents=0,
+                                   mm_quote_size_contracts=5, max_order_size_contracts=25)
+        q = compute_quotes(mkt, ws, fv, 0, 25, cfg_no_improve)
+        assert q is not None
+        assert q.bid_price == 48
+        assert q.ask_price == 52
 
-        # edge=4: bid=46, ask=54
-        cfg4 = BotConfig(mm_edge_cents=4, mm_quote_size_contracts=5, max_order_size_contracts=25)
-        q4 = compute_quotes(mkt, ws, fv, 0, 25, cfg4)
-        assert q4 is not None
-        assert q4.bid_price == 46
-        assert q4.ask_price == 54
+        # edge=4, improve=0: bid=fair-4=46, ask=fair+4=54
+        cfg_wide = BotConfig(mm_edge_cents=4, mm_improve_inside_cents=0,
+                             mm_quote_size_contracts=5, max_order_size_contracts=25)
+        q2 = compute_quotes(mkt, ws, fv, 0, 25, cfg_wide)
+        assert q2 is not None
+        assert q2.bid_price == 46
+        assert q2.ask_price == 54
+
+        # edge=2, improve=1: base_bid=48 vs improved=46 → max=48; same for ask
+        cfg_improve = BotConfig(mm_edge_cents=2, mm_improve_inside_cents=1,
+                                mm_quote_size_contracts=5, max_order_size_contracts=25)
+        qi = compute_quotes(mkt, ws, fv, 0, 25, cfg_improve)
+        assert qi is not None
+        assert qi.bid_price == 48  # edge dominates when tighter than improve
+        assert qi.ask_price == 52
+
+        # edge=1, improve=2: base_bid=49 vs improved=47 → 49; base_ask=51 vs improved=53 → 51
+        cfg_tight = BotConfig(mm_edge_cents=1, mm_improve_inside_cents=2,
+                              mm_quote_size_contracts=5, max_order_size_contracts=25)
+        qt = compute_quotes(mkt, ws, fv, 0, 25, cfg_tight)
+        assert qt is not None
+        assert qt.bid_price == 49
+        assert qt.ask_price == 51
 
     def test_post_only_guard(self) -> None:
         """Quotes must never cross the book."""
